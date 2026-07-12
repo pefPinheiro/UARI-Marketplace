@@ -3,9 +3,10 @@
 import React, { useState } from 'react';
 
 export default function MasterConfigPage() {
-  const [comissionRate, setComissionRate] = useState('10.0');
-  const [minPayout, setMinPayout] = useState('50.00');
+  const [appName, setAppName] = useState('UÁRI Marketplace');
   const [supportPhone, setSupportPhone] = useState('+55 (97) 99123-4567');
+  const [contactEmail, setContactEmail] = useState('contato@uarimarketplace.com.br');
+  const [systemVersion, setSystemVersion] = useState('1.2.0');
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
@@ -14,14 +15,15 @@ export default function MasterConfigPage() {
     setSubmitting(true);
     setTimeout(() => {
       setSubmitting(false);
-      alert('⚙️ Configurações Master salvas com sucesso em produção na nuvem!');
+      alert('⚙️ Configurações do Sistema salvas com sucesso em produção na nuvem!');
     }, 1000);
   };
 
   const handleDiscard = () => {
-    setComissionRate('10.0');
-    setMinPayout('50.00');
+    setAppName('UÁRI Marketplace');
     setSupportPhone('+55 (97) 99123-4567');
+    setContactEmail('contato@uarimarketplace.com.br');
+    setSystemVersion('1.2.0');
     setMaintenanceMode(false);
     alert('Alterações descartadas!');
   };
@@ -33,55 +35,35 @@ export default function MasterConfigPage() {
       <section style={styles.headerRow}>
         <div>
           <h1 style={styles.pageTitle}>Configurações Master</h1>
-          <p style={styles.pageSubtitle}>Ajuste as taxas operacionais globais, contatos de suporte de Tefé e gerencie o status do servidor.</p>
+          <p style={styles.pageSubtitle}>Ajuste as configurações do sistema UÁRI, contatos de suporte de Tefé e gerencie o status do servidor.</p>
         </div>
       </section>
 
       <form onSubmit={handleSave} style={styles.formLayout}>
         
-        {/* Lado Esquerdo: Parâmetros Financeiros Globais */}
+        {/* Lado Esquerdo: Configurações do Sistema */}
         <div style={styles.leftColumn}>
           
           <div style={styles.card}>
             <div style={styles.cardHeader}>
-              <span className="material-symbols-outlined" style={{ color: 'var(--primary)', fontSize: '22px' }}>payments</span>
-              <h2 style={styles.cardTitle}>Parâmetros Financeiros Globais</h2>
+              <span className="material-symbols-outlined" style={{ color: 'var(--primary)', fontSize: '22px' }}>settings_applications</span>
+              <h2 style={styles.cardTitle}>Configurações do Sistema</h2>
             </div>
 
             <div style={styles.formGroup}>
-              <label style={styles.formLabel}>Taxa de Comissão Padrão da Vitrine</label>
-              <div style={styles.inputWrapper}>
-                <input 
-                  type="number" 
-                  step="0.1" 
-                  value={comissionRate} 
-                  onChange={(e) => setComissionRate(e.target.value)}
-                  style={styles.formInput} 
-                  required 
-                />
-                <span style={styles.suffix}>%</span>
-              </div>
-              <span style={styles.helpText}>Incide sobre o faturamento virtual dos lojistas para a mensalidade/acerto offline.</span>
+              <label style={styles.formLabel}>Nome da Plataforma</label>
+              <input 
+                type="text" 
+                value={appName} 
+                onChange={(e) => setAppName(e.target.value)}
+                style={styles.formInput} 
+                required 
+              />
+              <span style={styles.helpText}>Nome principal da marca exibido nas lojas e aplicativo do cliente.</span>
             </div>
 
             <div style={styles.formGroup}>
-              <label style={styles.formLabel}>Limite Mínimo para Solicitação de Saque</label>
-              <div style={styles.inputWrapper}>
-                <span style={styles.prefix}>R$</span>
-                <input 
-                  type="number" 
-                  step="5" 
-                  value={minPayout} 
-                  onChange={(e) => setMinPayout(e.target.value)}
-                  style={styles.formInput} 
-                  required 
-                />
-              </div>
-              <span style={styles.helpText}>Valor mínimo acumulado que o lojista precisa ter para abrir saque Pix.</span>
-            </div>
-
-            <div style={styles.formGroup}>
-              <label style={styles.formLabel}>WhatsApp de Suporte Oficial da Plataforma</label>
+              <label style={styles.formLabel}>WhatsApp de Suporte Oficial (Tefé)</label>
               <input 
                 type="text" 
                 value={supportPhone} 
@@ -89,7 +71,31 @@ export default function MasterConfigPage() {
                 style={styles.formInput} 
                 required 
               />
-              <span style={styles.helpText}>Número de atendimento centralizado exibido aos lojistas na Central de Ajuda.</span>
+              <span style={styles.helpText}>Canal oficial de suporte regional para incidentes e suporte técnico a lojistas.</span>
+            </div>
+
+            <div style={styles.formGroup}>
+              <label style={styles.formLabel}>E-mail de Contato Administrativo</label>
+              <input 
+                type="email" 
+                value={contactEmail} 
+                onChange={(e) => setContactEmail(e.target.value)}
+                style={styles.formInput} 
+                required 
+              />
+              <span style={styles.helpText}>E-mail principal para contato oficial, notificações e comunicações gerais.</span>
+            </div>
+
+            <div style={styles.formGroup}>
+              <label style={styles.formLabel}>Versão Atual da Plataforma</label>
+              <input 
+                type="text" 
+                value={systemVersion} 
+                onChange={(e) => setSystemVersion(e.target.value)}
+                style={styles.formInput} 
+                required 
+              />
+              <span style={styles.helpText}>Tag de versão de lançamento do sistema UÁRI Marketplace.</span>
             </div>
 
           </div>
@@ -155,7 +161,7 @@ export default function MasterConfigPage() {
           style={styles.saveBtn}
           disabled={submitting}
         >
-          {submitting ? 'Salvando...' : 'Salvar Alterações Master'}
+          {submitting ? 'Salvando...' : 'Salvar Configurações'}
         </button>
       </footer>
 

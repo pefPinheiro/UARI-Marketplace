@@ -12,6 +12,7 @@ export interface DBProduct {
   status: 'draft' | 'published' | 'rejected';
   stock: number;
   is_featured: boolean;
+  attributes?: any;
   created_at: string;
 }
 
@@ -112,63 +113,78 @@ export const lojistaService = {
   },
 
   /**
-   * Consulta dados financeiros da carteira da loja
+   * Consulta estatísticas de visitas e produtos da loja (Substitui o antigo financeiro/carteira)
    */
-  async fetchStoreWallet(storeId: string): Promise<DBWallet | null> {
+  async fetchStoreWallet(storeId: string): Promise<any | null> {
     try {
-      const { data, error } = await supabase
-        .from('wallets')
-        .select('*')
-        .eq('store_id', storeId)
-        .single();
+      // 1. Contador de visitas físicas (check-ins)
+      const { count: visitsCount } = await supabase
+        .from('store_visits')
+        .select('*', { count: 'exact', head: true })
+        .eq('store_id', storeId);
 
-      if (error) throw error;
-      return data as DBWallet;
+      // 2. Contador de produtos publicados
+      const { count: productsCount } = await supabase
+        .from('products')
+        .select('*', { count: 'exact', head: true })
+        .eq('store_id', storeId)
+        .eq('status', 'published');
+
+      // 3. Contador de cupons
+      const { count: couponsCount } = await supabase
+        .from('coupons')
+        .select('*', { count: 'exact', head: true })
+        .eq('store_id', storeId);
+
+      return {
+        id: storeId,
+        store_id: storeId,
+        available_balance: visitsCount || 0, // Mapeado para total de visitas
+        escrow_balance: productsCount || 0,     // Mapeado para produtos publicados
+        coupons_count: couponsCount || 0,
+        updated_at: new Date().toISOString()
+      };
     } catch (err) {
-      console.error('Erro ao buscar carteira da loja:', err);
+      console.error('Erro ao buscar estatísticas da loja:', err);
       return null;
     }
   },
 
   /**
-   * Consulta histórico de transações da carteira do lojista
+   * Consulta histórico de visitas físicas (check-ins) na loja
    */
-  async fetchWalletTransactions(walletId: string): Promise<DBTransaction[]> {
+  async fetchWalletTransactions(storeId: string): Promise<any[]> {
     try {
       const { data, error } = await supabase
-        .from('wallet_transactions')
-        .select('*')
-        .eq('wallet_id', walletId)
-        .order('created_at', { ascending: false });
+        .from('store_visits')
+        .select('*, client:profiles(full_name)')
+        .eq('store_id', storeId)
+        .order('scanned_at', { ascending: false });
 
       if (error) throw error;
-      return data as DBTransaction[];
+
+      // Adaptar para o formato esperado pela listagem de transações se necessário, ou retornar como histórico de visitas
+      return (data || []).map(v => ({
+        id: v.id,
+        wallet_id: storeId,
+        order_id: null,
+        type: 'credit_sale',
+        amount: v.points_awarded,
+        created_at: v.scanned_at,
+        client_name: v.client?.full_name || 'Cliente UÁRI'
+      }));
     } catch (err) {
-      console.error('Erro ao buscar transações:', err);
+      console.error('Erro ao buscar visitas:', err);
       return [];
     }
   },
 
   /**
-   * Solicita resgate/saque via Pix acionando RLS/Trigger no Postgres
+   * Simulação: Lojistas não fazem saques financeiros, apenas mostram informações.
    */
   async requestPixWithdrawal(storeId: string, amount: number, pixKey: string): Promise<boolean> {
-    try {
-      const { error } = await supabase
-        .from('withdrawals')
-        .insert({
-          store_id: storeId,
-          amount,
-          pix_key: pixKey,
-          status: 'requested'
-        });
-
-      if (error) throw error;
-      return true;
-    } catch (err) {
-      console.error('Erro ao registrar saque:', err);
-      return false;
-    }
+    console.log('Saque financeiro desativado. Plataforma opera em modelo vitrine.');
+    return true;
   },
 
   /**
@@ -191,9 +207,37 @@ export const lojistaService = {
   },
 
   /**
+   * Faz upload da imagem de rascunho do produto para o bucket "products" no Supabase Storage
+   */
+  async uploadProductImage(storeId: string, file: File): Promise<string | null> {
+    try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${storeId}/${Date.now()}.${fileExt}`;
+      
+      const { data, error } = await supabase.storage
+        .from('products')
+        .upload(fileName, file, {
+          cacheControl: '3600',
+          upsert: false
+        });
+
+      if (error) throw error;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('products')
+        .getPublicUrl(data.path);
+
+      return publicUrl;
+    } catch (err) {
+      console.error('Erro ao fazer upload da imagem:', err);
+      return null;
+    }
+  },
+
+  /**
    * Envia rascunho de produto bruta para curadoria do Admin
    */
-  async createProductDraft(storeId: string, title: string, price: number, category: string, imageUrl: string): Promise<boolean> {
+  async createProductDraft(storeId: string, title: string, price: number, category: string, imageUrl: string, attributes?: any): Promise<boolean> {
     try {
       const { error } = await supabase
         .from('products')
@@ -206,13 +250,219 @@ export const lojistaService = {
           images: [imageUrl],
           category,
           status: 'draft',
-          stock: 20
+          stock: 20,
+          attributes: attributes || {}
         });
 
       if (error) throw error;
       return true;
     } catch (err) {
       console.error('Erro ao criar draft de produto:', err);
+      return false;
+    }
+  },
+
+  /**
+   * Cria um produto no banco de dados com dados completos
+   */
+  async createProduct(productData: Partial<DBProduct>): Promise<boolean> {
+    try {
+      const { error } = await supabase
+        .from('products')
+        .insert({
+          ...productData,
+          status: productData.status || 'draft',
+          stock: 20
+        });
+
+      if (error) throw error;
+      return true;
+    } catch (err) {
+      console.error('Erro ao criar produto:', err);
+      return false;
+    }
+  },
+
+  /**
+   * Cria uma promoção para um produto e atualiza seu preço atual
+   */
+  async createProductPromotion(productId: string, promotionalPrice: number, startDate: string, endDate: string): Promise<boolean> {
+    try {
+      const { error } = await supabase
+        .from('promotions')
+        .insert({
+          product_id: productId,
+          promotional_price: promotionalPrice,
+          start_date: startDate,
+          end_date: endDate,
+          is_active: true
+        });
+
+      if (error) throw error;
+
+      // Atualiza o preço atual do produto para o valor promocional
+      const { error: prodError } = await supabase
+        .from('products')
+        .update({ current_price: promotionalPrice })
+        .eq('id', productId);
+
+      if (prodError) throw prodError;
+
+      return true;
+    } catch (err) {
+      console.error('Erro ao criar promoção:', err);
+      return false;
+    }
+  },
+
+  /**
+   * Atualiza/edita uma promoção existente e ajusta o preço atual do produto
+   */
+  async updateProductPromotion(promotionId: string, productId: string, promotionalPrice: number, endDate: string): Promise<boolean> {
+    try {
+      const { error } = await supabase
+        .from('promotions')
+        .update({
+          promotional_price: promotionalPrice,
+          end_date: endDate
+        })
+        .eq('id', promotionId);
+
+      if (error) throw error;
+
+      // Atualiza o preço do produto correspondente
+      const { error: prodError } = await supabase
+        .from('products')
+        .update({ current_price: promotionalPrice })
+        .eq('id', productId);
+
+      if (prodError) throw prodError;
+
+      return true;
+    } catch (err) {
+      console.error('Erro ao atualizar promoção:', err);
+      return false;
+    }
+  },
+
+  /**
+   * Cancela uma promoção (desativa) e restaura o preço original do produto
+   */
+  async cancelProductPromotion(promotionId: string, productId: string, originalPrice: number): Promise<boolean> {
+    try {
+      const { error } = await supabase
+        .from('promotions')
+        .update({ is_active: false })
+        .eq('id', promotionId);
+
+      if (error) throw error;
+
+      // Restaura o preço do produto para o original_price
+      const { error: prodError } = await supabase
+        .from('products')
+        .update({ current_price: originalPrice })
+        .eq('id', productId);
+
+      if (prodError) throw prodError;
+
+      return true;
+    } catch (err) {
+      console.error('Erro ao cancelar promoção:', err);
+      return false;
+    }
+  },
+
+  /**
+   * Consulta promoções ativas do produto
+   */
+  async fetchProductPromotions(productId: string): Promise<any[]> {
+    try {
+      const { data, error } = await supabase
+        .from('promotions')
+        .select('*')
+        .eq('product_id', productId)
+        .eq('is_active', true);
+
+      if (error) throw error;
+      return data || [];
+    } catch (err) {
+      console.error('Erro ao buscar promoções do produto:', err);
+      return [];
+    }
+  },
+
+  /**
+   * Consulta todas as promoções ativas de uma loja
+   */
+  async fetchStorePromotions(storeId: string): Promise<any[]> {
+    try {
+      const { data, error } = await supabase
+        .from('promotions')
+        .select('*, products!inner(*)')
+        .eq('products.store_id', storeId)
+        .eq('is_active', true);
+
+      if (error) throw error;
+      return data || [];
+    } catch (err) {
+      console.error('Erro ao buscar promoções da loja:', err);
+      return [];
+    }
+  },
+
+  /**
+   * Atualiza as informações de um produto no banco de dados
+   */
+  async updateProduct(productId: string, updates: Partial<DBProduct>): Promise<boolean> {
+    try {
+      const { error } = await supabase
+        .from('products')
+        .update(updates)
+        .eq('id', productId);
+
+      if (error) throw error;
+      return true;
+    } catch (err) {
+      console.error('Erro ao atualizar produto:', err);
+      return false;
+    }
+  },
+
+  /**
+   * Atualiza o status/visibilidade de um produto
+   */
+  async updateProductStatus(productId: string, status: 'published' | 'draft'): Promise<boolean> {
+    try {
+      const { error } = await supabase
+        .from('products')
+        .update({ status })
+        .eq('id', productId);
+
+      if (error) throw error;
+      return true;
+    } catch (err) {
+      console.error('Erro ao atualizar status do produto:', err);
+      return false;
+    }
+  },
+
+  /**
+   * Atualiza o preço atual de um produto
+   */
+  async updateProductPrice(productId: string, price: number): Promise<boolean> {
+    try {
+      const { error } = await supabase
+        .from('products')
+        .update({ 
+          current_price: price,
+          original_price: price * 1.25 // Markup de vitrine correspondente
+        })
+        .eq('id', productId);
+
+      if (error) throw error;
+      return true;
+    } catch (err) {
+      console.error('Erro ao atualizar preço do produto:', err);
       return false;
     }
   },

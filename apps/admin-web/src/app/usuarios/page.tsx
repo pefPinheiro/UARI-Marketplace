@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { supabase } from '@/lib/supabase';
 
 interface PlatformUser {
   id: string;
@@ -12,28 +13,98 @@ interface PlatformUser {
 }
 
 export default function UsuariosPage() {
-  const [users, setUsers] = useState<PlatformUser[]>([
-    { id: 'u1', name: 'Carlos Silva', email: 'carlossilva@gmail.com', role: 'client', registeredAt: '24 Out, 2023', status: 'active' },
-    { id: 'u2', name: 'Maria das Graças', email: 'mariagracas@outlook.com', role: 'client', registeredAt: '23 Out, 2023', status: 'active' },
-    { id: 'u3', name: 'Rodrigo Amazonas', email: 'rodrigoamazonas@uamail.com', role: 'client', registeredAt: '22 Out, 2023', status: 'active' },
-    { id: 'u4', name: 'Ana Paula Silva', email: 'anapaula@gmail.com', role: 'client', registeredAt: '20 Out, 2023', status: 'suspended' },
-    { id: 'u5', name: 'João da Castanha', email: 'joaocastanhas@tefe.com', role: 'store', registeredAt: '15 Out, 2023', status: 'active' },
-    { id: 'u6', name: 'Admin Master', email: 'admin@uamarketplace.com', role: 'admin', registeredAt: '01 Set, 2023', status: 'active' }
-  ]);
-
+  const [users, setUsers] = useState<PlatformUser[]>([]);
   const [activeUserId, setActiveUserId] = useState<string | null>(null);
   const [newRole, setNewRole] = useState<'client' | 'store' | 'admin'>('client');
   const [showRoleModal, setShowRoleModal] = useState(false);
 
-  const toggleUserStatus = (id: string) => {
-    setUsers(prev => prev.map(u => {
-      if (u.id === id) {
-        const nextStatus = u.status === 'active' ? 'suspended' : 'active';
-        alert(`O status do usuário "${u.name}" foi alterado para ${nextStatus === 'active' ? 'Ativo' : 'Suspenso'}!`);
-        return { ...u, status: nextStatus };
+  // Buscar Usuários da tabela do Supabase no Carregamento
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  const fetchUsers = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select(`
+          id,
+          email,
+          full_name,
+          role,
+          created_at,
+          stores (
+            id,
+            name,
+            subscription_status,
+            is_verified
+          )
+        `);
+
+      if (error) throw error;
+
+      if (data) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const mapped: PlatformUser[] = data.map((item: any) => {
+          const store = Array.isArray(item.stores) ? item.stores[0] : item.stores;
+          const isSuspended = store?.subscription_status === 'inactive';
+          
+          return {
+            id: item.id,
+            name: item.full_name || 'Usuário Sem Nome',
+            email: item.email,
+            role: item.role === 'user' ? 'client' : item.role,
+            registeredAt: new Date(item.created_at).toLocaleDateString('pt-BR', {
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric'
+            }),
+            status: isSuspended ? 'suspended' : 'active'
+          };
+        });
+        setUsers(mapped);
       }
-      return u;
-    }));
+    } catch (err) {
+      console.error('Erro ao carregar usuários do Supabase:', err);
+    }
+  };
+
+  const toggleUserStatus = async (id: string) => {
+    try {
+      const user = users.find(u => u.id === id);
+      if (!user) return;
+
+      const nextStatus = user.status === 'active' ? 'suspended' : 'active';
+      const subscriptionStatus = nextStatus === 'suspended' ? 'inactive' : 'active';
+
+      // Se for um ID de banco real (não mock)
+      if (!id.startsWith('u')) {
+        if (user.role === 'store') {
+          // Buscar a loja correspondente ao lojista
+          const { data: storeData } = await supabase
+            .from('stores')
+            .select('id')
+            .eq('owner_id', id)
+            .maybeSingle();
+
+          if (storeData?.id) {
+            const { error } = await supabase
+              .from('stores')
+              .update({ subscription_status: subscriptionStatus })
+              .eq('id', storeData.id);
+
+            if (error) {
+              console.error('Erro ao atualizar status da loja no Supabase:', error);
+            }
+          }
+        }
+      }
+
+      setUsers(prev => prev.map(u => u.id === id ? { ...u, status: nextStatus } : u));
+      alert(`O status de acesso do usuário "${user.name}" foi alterado para ${nextStatus === 'active' ? 'Ativo' : 'Suspenso'}!`);
+    } catch (err) {
+      console.error('Erro ao alternar status do usuário:', err);
+    }
   };
 
   const handleEditRole = (id: string, current: 'client' | 'store' | 'admin') => {
@@ -42,14 +113,33 @@ export default function UsuariosPage() {
     setShowRoleModal(true);
   };
 
-  const handleSaveRole = (e: React.FormEvent) => {
+  const handleSaveRole = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeUserId) return;
 
-    setUsers(prev => prev.map(u => u.id === activeUserId ? { ...u, role: newRole } : u));
-    setShowRoleModal(false);
-    setActiveUserId(null);
-    alert('Nível de permissão (Role) atualizado com sucesso!');
+    const user = users.find(u => u.id === activeUserId);
+    if (!user) return;
+
+    try {
+      // Se for um ID de banco real, atualiza no Supabase
+      if (!activeUserId.startsWith('u')) {
+        const dbRole = newRole === 'client' ? 'user' : newRole;
+        const { error } = await supabase
+          .from('profiles')
+          .update({ role: dbRole })
+          .eq('id', activeUserId);
+
+        if (error) throw error;
+      }
+
+      setUsers(prev => prev.map(u => u.id === activeUserId ? { ...u, role: newRole } : u));
+      setShowRoleModal(false);
+      setActiveUserId(null);
+      alert('Nível de permissão (Role) atualizado com sucesso!');
+    } catch (err) {
+      console.error('Erro ao atualizar permissão:', err);
+      alert('Erro ao atualizar permissão no Supabase.');
+    }
   };
 
   const getRoleLabel = (role: string) => {
@@ -61,11 +151,11 @@ export default function UsuariosPage() {
     }
   };
 
-  // Contadores
-  const totalUsers = users.length + 136; // Adiciona simulação
-  const clientsCount = users.filter(u => u.role === 'client').length + 116;
-  const storesCount = users.filter(u => u.role === 'store').length + 17;
-  const adminsCount = users.filter(u => u.role === 'admin').length + 3;
+  // Contadores com base em dados reais
+  const totalUsers = users.length;
+  const clientsCount = users.filter(u => u.role === 'client').length;
+  const storesCount = users.filter(u => u.role === 'store').length;
+  const adminsCount = users.filter(u => u.role === 'admin').length;
 
   return (
     <div style={styles.container}>
@@ -177,7 +267,7 @@ export default function UsuariosPage() {
                 <label style={styles.formLabel}>Selecione o Cargo/Acesso</label>
                 <select 
                   value={newRole} 
-                  onChange={(e) => setNewRole(e.target.value as any)}
+                  onChange={(e) => setNewRole(e.target.value as 'client' | 'store' | 'admin')}
                   style={styles.selectInput}
                 >
                   <option value="client">Cliente / Consumidor</option>

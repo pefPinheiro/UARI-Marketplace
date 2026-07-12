@@ -66,7 +66,7 @@ export default function ProductDetailsScreen() {
         {/* Large Product Image Figma */}
         <View style={styles.imageCard}>
           <Image 
-            source={{ uri: activeProduct.images[0] || 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=800&auto=format&fit=crop&q=80' }} 
+            source={activeProduct.images && activeProduct.images[0] ? { uri: activeProduct.images[0] } : require('../../../assets/logo.png')} 
             style={styles.productImg}
             resizeMode="cover"
           />

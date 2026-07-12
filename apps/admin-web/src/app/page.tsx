@@ -34,7 +34,7 @@ export default function AdminDashboard() {
       <section style={styles.pageHeader}>
         <h1 style={styles.pageTitle}>Dashboard Master</h1>
         <p style={styles.pageSubtitle}>
-          Torre de controle operacional do marketplace de Tefé. <span style={styles.italicQuote}>"Quebra essa castanha"</span>
+          Torre de controle operacional do marketplace de Tefé. <span style={styles.italicQuote}>&quot;Quebra essa castanha&quot;</span>
         </p>
       </section>
 
@@ -239,7 +239,7 @@ export default function AdminDashboard() {
               </div>
               <div style={styles.feedContent}>
                 <p style={styles.feedText}>
-                  <strong>Loja Amazônia Viva</strong> criou uma nova promoção: <span style={{ color: 'var(--primary)', fontWeight: '600' }}>"Festival da Castanha"</span>.
+                  <strong>Loja Amazônia Viva</strong> criou uma nova promoção: <span style={{ color: 'var(--primary)', fontWeight: '600' }}>&quot;Festival da Castanha&quot;</span>.
                 </p>
                 <span style={styles.feedTime}>há 2 minutos</span>
               </div>

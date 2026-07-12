@@ -161,7 +161,7 @@ export default function CartScreen() {
             {/* Lista de Itens do Carrinho Figma */}
             {Object.values(cart).map((item) => (
               <View key={item.product.id} style={styles.cartCard}>
-                <Image source={{ uri: item.product.images[0] }} style={styles.itemImage} />
+                <Image source={item.product.images && item.product.images[0] ? { uri: item.product.images[0] } : require('../../../assets/logo.png')} style={styles.itemImage} />
                 <View style={styles.itemInfo}>
                   <Text style={styles.itemTitle} numberOfLines={1}>{item.product.title}</Text>
                   <Text style={styles.itemPrice}>R$ {Number(item.product.current_price).toFixed(2)}</Text>

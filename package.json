@@ -2,10 +2,12 @@
   "name": "uari-marketplace",
   "version": "1.0.0",
   "private": true,
+  "packageManager": "npm@10.9.3",
   "description": "Monorepo do UÁRI Marketplace",
   "workspaces": [
     "apps/lojista-web",
     "apps/admin-web",
+    "apps/uari-mobile",
     "packages/*"
   ],
   "scripts": {

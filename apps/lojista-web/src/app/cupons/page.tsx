@@ -3,97 +3,250 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useLojista } from '../layout-client';
 import { lojistaService, DBCoupon, DBProduct } from '../../services/lojista';
+import { supabase } from '../../lib/supabase';
 
-// Mock de Cupons padrão do Figma
-const DEMO_COUPONS = [
-  { code: 'TEFE10', discount: '10% de desconto', maxUses: 100, usesCount: 45, status: 'active' },
-  { code: 'BEMVINDO5', discount: '5% de desconto', maxUses: 50, usesCount: 12, status: 'active' },
-  { code: 'NATAL23', discount: '15% de desconto', maxUses: 100, usesCount: 100, status: 'expired' }
-];
+interface ActivePromotion {
+  id: string; // promotion DB id or product DB id
+  productId: string;
+  productTitle: string;
+  type: 'period' | 'quantity';
+  discountPercent: number;
+  startDate?: string;
+  endDate?: string;
+  minQty?: number;
+  originalPrice: number;
+  promotionalPrice?: number;
+}
 
-// Mock de produtos para o Gestor de Ofertas
-const OFFER_PRODUCTS_DEMO = [
-  {
-    id: 'demo-1',
-    title: 'Castanha-do-Pará (500g)',
-    category: 'Alimentos',
-    stock: 42,
-    price: 45.00,
-    img: 'https://images.unsplash.com/photo-1543257580-7269da773bf5?auto=format&fit=crop&q=80&w=300'
-  },
-  {
-    id: 'demo-2',
-    title: 'Tigela em Madeira Nobre',
-    category: 'Artesanato',
-    stock: 12,
-    price: 120.00,
-    img: 'https://images.unsplash.com/photo-1513519245088-0e12902e5a38?auto=format&fit=crop&q=80&w=300'
-  },
-  {
-    id: 'demo-3',
-    title: 'Polpa de Açaí Especial (1L)',
-    category: 'Bebidas',
-    stock: 85,
-    price: 22.00,
-    img: 'https://images.unsplash.com/photo-1563865436874-9aef32095ffd?auto=format&fit=crop&q=80&w=300'
-  }
-];
+interface PlatformCampaign {
+  id: string;
+  code: string;
+  realCode: string;
+  discountPercent: number;
+  category: string;
+  expiresAt: string;
+  rawExpiresAt: string;
+}
 
 export default function PromotionsPage() {
   const { store } = useLojista();
-  const [coupons, setCoupons] = useState<DBCoupon[]>([]);
+  const [activeTab, setActiveTab] = useState<'promotions' | 'coupons'>('promotions');
   const [products, setProducts] = useState<DBProduct[]>([]);
+  const [coupons, setCoupons] = useState<DBCoupon[]>([]);
+  const [activePromotions, setActivePromotions] = useState<ActivePromotion[]>([]);
+  const [platformCampaigns, setPlatformCampaigns] = useState<PlatformCampaign[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Form states de criação
-  const [code, setCode] = useState('');
-  const [discountValue, setDiscountValue] = useState('10');
-  const [maxUses, setMaxUses] = useState('100');
-  const [submitting, setSubmitting] = useState(false);
+  // States: Formulário de Promoção Própria
+  const [promoType, setPromoType] = useState<'period' | 'quantity'>('period');
+  const [promoDiscount, setPromoDiscount] = useState('15');
+  const [promoStartDate, setPromoStartDate] = useState('');
+  const [promoEndDate, setPromoEndDate] = useState('');
+  const [promoMinQty, setPromoMinQty] = useState('3');
+  const [applyToAll, setApplyToAll] = useState(true);
+  const [selectedProductIds, setSelectedProductIds] = useState<{ [key: string]: boolean }>({});
+
+  // States: Formulário de Cupom
+  const [couponCode, setCouponCode] = useState('');
+  const [couponDiscount, setCouponDiscount] = useState('10');
+  const [couponMaxUses, setCouponMaxUses] = useState('100');
+
+  // States: Modal de Adesão à Campanha do Marketplace
+  const [joiningCampaign, setJoiningCampaign] = useState<PlatformCampaign | null>(null);
+  const [campaignProductIds, setCampaignProductIds] = useState<{ [key: string]: boolean }>({});
+
+  // Feedback states
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  // Checkboxes de produtos no Gestor de Ofertas
-  const [selectedProductIds, setSelectedProductIds] = useState<{ [key: string]: boolean }>({
-    'demo-1': true,
-    'demo-2': true,
-    'demo-3': true
-  });
-
-  const loadPromotionsData = useCallback(async () => {
+  const loadData = useCallback(async () => {
     if (!store?.id) return;
     setLoading(true);
     try {
-      const couponList = await lojistaService.fetchStoreCoupons(store.id);
-      setCoupons(couponList);
-
+      // 1. Fetch produtos e cupons da loja
       const prodList = await lojistaService.fetchStoreProducts(store.id);
       setProducts(prodList);
 
-      // Pré-marca os produtos reais da loja
-      const selectMap: { [key: string]: boolean } = {};
-      prodList.forEach(p => {
-        selectMap[p.id] = true;
+      const couponList = await lojistaService.fetchStoreCoupons(store.id);
+      setCoupons(couponList);
+
+      // 2. Fetch promoções baseadas em período (da tabela promotions)
+      const { data: dbPromos, error: dbPromosErr } = await supabase
+        .from('promotions')
+        .select('*, products!inner(*)')
+        .eq('products.store_id', store.id)
+        .eq('is_active', true);
+
+      if (dbPromosErr) throw dbPromosErr;
+
+      const mappedPeriodPromos: ActivePromotion[] = (dbPromos || []).map((p: any) => {
+        const discPercent = Math.round(
+          ((p.products.original_price - p.promotional_price) / p.products.original_price) * 100
+        );
+        return {
+          id: p.id,
+          productId: p.product_id,
+          productTitle: p.products.title,
+          type: 'period',
+          discountPercent: discPercent || 15,
+          startDate: new Date(p.start_date).toLocaleDateString('pt-BR'),
+          endDate: new Date(p.end_date).toLocaleDateString('pt-BR'),
+          originalPrice: p.products.original_price,
+          promotionalPrice: p.promotional_price
+        };
       });
-      setSelectedProductIds(selectMap);
+
+      // 3. Mapear promoções baseadas em quantidade (armazenadas em attributes do produto)
+      const mappedQtyPromos: ActivePromotion[] = prodList
+        .filter(p => p.attributes?.quantity_discount)
+        .map(p => ({
+          id: p.id,
+          productId: p.id,
+          productTitle: p.title,
+          type: 'quantity',
+          discountPercent: p.attributes.quantity_discount.discount_percent,
+          minQty: p.attributes.quantity_discount.min_qty,
+          originalPrice: p.current_price
+        }));
+
+      setActivePromotions([...mappedPeriodPromos, ...mappedQtyPromos]);
+
+      // 4. Fetch campanhas do Marketplace (Admin)
+      const { data: dbCampaigns, error: dbCampaignsErr } = await supabase
+        .from('coupons')
+        .select('*')
+        .eq('created_by', 'admin')
+        .is('store_id', null)
+        .gt('expires_at', new Date().toISOString());
+
+      if (dbCampaignsErr) throw dbCampaignsErr;
+
+      const mappedCampaigns: PlatformCampaign[] = (dbCampaigns || [])
+        .filter((item: any) => item.code.startsWith('CAMP#'))
+        .map((item: any) => {
+          const parts = item.code.split('#');
+          return {
+            id: item.id,
+            code: item.code,
+            realCode: parts[1] || item.code,
+            discountPercent: item.discount_value,
+            category: parts[2] || 'Todas',
+            expiresAt: new Date(item.expires_at).toLocaleDateString('pt-BR', {
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric'
+            }),
+            rawExpiresAt: item.expires_at
+          };
+        });
+
+      setPlatformCampaigns(mappedCampaigns);
+
+      // Pré-inicializa os produtos selecionados
+      const initialSelected: { [key: string]: boolean } = {};
+      prodList.forEach(p => {
+        initialSelected[p.id] = false;
+      });
+      setSelectedProductIds(initialSelected);
     } catch (err) {
-      console.error('Erro ao buscar dados de promoções:', err);
+      console.error('Erro ao carregar dados da central de promoções:', err);
     } finally {
       setLoading(false);
     }
   }, [store?.id]);
 
   useEffect(() => {
-    loadPromotionsData();
-  }, [loadPromotionsData]);
+    loadData();
+  }, [loadData]);
+
+  const handleToggleSelectProduct = (id: string) => {
+    setSelectedProductIds(prev => ({
+      ...prev,
+      [id]: !prev[id]
+    }));
+  };
+
+  const handleCreatePromotion = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!store?.id) return;
+    setFeedback(null);
+
+    const discount = parseFloat(promoDiscount);
+    if (isNaN(discount) || discount <= 0 || discount >= 100) {
+      setFeedback({ type: 'error', message: 'Defina um desconto válido entre 1% e 99%.' });
+      return;
+    }
+
+    const targetProducts = applyToAll 
+      ? products 
+      : products.filter(p => selectedProductIds[p.id]);
+
+    if (targetProducts.length === 0) {
+      setFeedback({ type: 'error', message: 'Selecione pelo menos um produto para aplicar a promoção.' });
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      if (promoType === 'period') {
+        if (!promoStartDate || !promoEndDate) {
+          setFeedback({ type: 'error', message: 'Selecione o período de início e término.' });
+          setSubmitting(false);
+          return;
+        }
+
+        const start = new Date(promoStartDate).toISOString();
+        const end = new Date(promoEndDate).toISOString();
+
+        for (const prod of targetProducts) {
+          const promoPrice = prod.current_price * (1 - discount / 100);
+          await lojistaService.createProductPromotion(prod.id, promoPrice, start, end);
+        }
+
+        setFeedback({ type: 'success', message: 'Promoção por período cadastrada com sucesso!' });
+      } else {
+        const qty = parseInt(promoMinQty);
+        if (isNaN(qty) || qty <= 1) {
+          setFeedback({ type: 'error', message: 'Defina uma quantidade mínima válida (maior que 1).' });
+          setSubmitting(false);
+          return;
+        }
+
+        for (const prod of targetProducts) {
+          const updatedAttributes = {
+            ...(prod.attributes || {}),
+            quantity_discount: {
+              min_qty: qty,
+              discount_percent: discount
+            }
+          };
+          await lojistaService.updateProduct(prod.id, { attributes: updatedAttributes });
+        }
+
+        setFeedback({ type: 'success', message: 'Promoção de quantidade progressiva cadastrada!' });
+      }
+
+      setPromoStartDate('');
+      setPromoEndDate('');
+      setApplyToAll(true);
+      await loadData();
+    } catch (err) {
+      console.error('Erro ao cadastrar promoção:', err);
+      setFeedback({ type: 'error', message: 'Erro ao salvar a promoção no banco de dados.' });
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const handleCreateCoupon = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!store?.id) return;
     setFeedback(null);
 
-    const val = parseFloat(discountValue);
-    const uses = parseInt(maxUses);
+    const val = parseFloat(couponDiscount);
+    const uses = parseInt(couponMaxUses);
 
-    if (!code.trim()) {
+    if (!couponCode.trim()) {
       setFeedback({ type: 'error', message: 'Digite o código do cupom.' });
       return;
     }
@@ -104,240 +257,477 @@ export default function PromotionsPage() {
 
     setSubmitting(true);
     try {
-      // Cria o cupom no banco de dados
       const success = await lojistaService.createStoreCoupon(
         store.id,
-        code.toUpperCase(),
+        couponCode.toUpperCase().replace(/\s+/g, ''),
         val,
         'percent',
-        new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString(),
         uses
       );
 
       if (success) {
-        setFeedback({
-          type: 'success',
-          message: `Cupom ${code.toUpperCase()} criado e publicado com sucesso!`
-        });
-        setCode('');
-        setDiscountValue('10');
-        await loadPromotionsData();
+        setFeedback({ type: 'success', message: `Cupom ${couponCode.toUpperCase()} publicado com sucesso!` });
+        setCouponCode('');
+        setCouponDiscount('10');
+        await loadData();
       } else {
         setFeedback({ type: 'error', message: 'Erro ao cadastrar cupom. O código já existe.' });
       }
     } catch (err) {
+      console.error(err);
       setFeedback({ type: 'error', message: 'Falha na conexão com o banco de dados.' });
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleToggleSelectProduct = (id: string) => {
-    setSelectedProductIds(prev => ({
-      ...prev,
-      [id]: !prev[id]
-    }));
+  const handleEndPromotion = async (promo: ActivePromotion) => {
+    const confirmEnd = confirm(`Deseja realmente encerrar a promoção do produto "${promo.productTitle}"?`);
+    if (!confirmEnd) return;
+
+    try {
+      if (promo.type === 'period') {
+        await lojistaService.cancelProductPromotion(promo.id, promo.productId, promo.originalPrice);
+      } else {
+        const prod = products.find(p => p.id === promo.productId);
+        if (prod) {
+          const updatedAttributes = { ...(prod.attributes || {}) };
+          delete updatedAttributes.quantity_discount;
+          await lojistaService.updateProduct(promo.productId, { attributes: updatedAttributes });
+        }
+      }
+      alert('Promoção encerrada com sucesso!');
+      await loadData();
+    } catch (err) {
+      console.error('Erro ao encerrar promoção:', err);
+    }
   };
 
-  const selectedCount = Object.values(selectedProductIds).filter(Boolean).length;
+  // Funções de Adesão à Campanha do Admin
+  const handleOpenJoinModal = (campaign: PlatformCampaign) => {
+    setJoiningCampaign(campaign);
+    // Pré-seleciona os produtos que pertencem à categoria da campanha (com suporte a múltiplas categorias)
+    const preselected: { [key: string]: boolean } = {};
+    products.forEach(p => {
+      const productCategories = (p.category || '').split(',').map(c => c.trim().toLowerCase());
+      const matchesCategory = campaign.category === 'Todas' || productCategories.includes(campaign.category.toLowerCase());
+      preselected[p.id] = matchesCategory;
+    });
+    setCampaignProductIds(preselected);
+  };
+
+  const handleConfirmJoinCampaign = async () => {
+    if (!joiningCampaign || !store?.id) return;
+
+    const selectedProds = products.filter(p => campaignProductIds[p.id]);
+    if (selectedProds.length === 0) {
+      alert('Selecione pelo menos um produto para participar.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const start = new Date().toISOString();
+      const end = joiningCampaign.rawExpiresAt;
+      const discount = joiningCampaign.discountPercent;
+
+      for (const prod of selectedProds) {
+        const promoPrice = prod.current_price * (1 - discount / 100);
+
+        // 1. Cadastra na tabela promotions
+        await lojistaService.createProductPromotion(prod.id, promoPrice, start, end);
+
+        // 2. Atualiza attributes do produto informando a participação na campanha
+        const updatedAttributes = {
+          ...(prod.attributes || {}),
+          platform_campaign: {
+            campaign_id: joiningCampaign.id,
+            campaign_code: joiningCampaign.realCode,
+            discount_percent: discount
+          }
+        };
+        await lojistaService.updateProduct(prod.id, { attributes: updatedAttributes });
+      }
+
+      alert(`Você aderiu com sucesso à campanha "${joiningCampaign.realCode}"!`);
+      setJoiningCampaign(null);
+      await loadData();
+    } catch (err) {
+      console.error('Erro ao aderir à campanha:', err);
+      alert('Ocorreu um erro ao processar sua adesão.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const formatCurrency = (val: number) => {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
   };
-
-  // Prepara itens para o Gestor de Ofertas
-  const isDemoProducts = products.length === 0;
-  const displayProducts = isDemoProducts
-    ? OFFER_PRODUCTS_DEMO
-    : products.map(p => ({
-        id: p.id,
-        title: p.title,
-        category: p.category,
-        stock: p.stock,
-        price: p.current_price,
-        img: p.images?.[0] || 'https://images.unsplash.com/photo-1543257580-7269da773bf5?auto=format&fit=crop&q=80&w=300'
-      }));
-
-  // Prepara cupons ativos
-  const isDemoCoupons = coupons.length === 0;
-  const displayCoupons = isDemoCoupons
-    ? DEMO_COUPONS
-    : coupons.map(c => ({
-        code: c.code,
-        discount: c.type === 'percent' ? `${c.discount_value}% de desconto` : formatCurrency(c.discount_value),
-        maxUses: c.max_uses,
-        usesCount: c.uses_count,
-        status: new Date(c.expires_at) < new Date() ? 'expired' : 'active'
-      }));
 
   return (
     <div style={styles.container}>
       
       {/* Top Header Row */}
       <section style={styles.headerRow}>
-        <h1 style={styles.pageTitle}>Central de Promoções</h1>
-        <button 
-          onClick={() => alert('Crie uma nova campanha sazonal para promover seus produtos!')}
-          style={styles.newCampaignBtn}
-        >
-          + Nova Campanha
-        </button>
+        <div>
+          <h1 style={styles.pageTitle}>Central de Promoções & Cupons</h1>
+          <p style={styles.pageSubtitle}>Gerencie as ofertas, cupons virtuais e regras de acúmulo de desconto progressivo da sua loja.</p>
+        </div>
       </section>
 
-      {/* Grid Principal (Split de Ofertas e Emissão) */}
+      {/* Tabs Selector */}
+      <div style={styles.tabContainer}>
+        <button 
+          onClick={() => { setActiveTab('promotions'); setFeedback(null); }}
+          style={{ ...styles.tabBtn, ...(activeTab === 'promotions' ? styles.tabBtnActive : {}) }}
+        >
+          <span className="material-symbols-outlined">shopping_bag</span>
+          <span>Criar Promoções de Produtos</span>
+        </button>
+        <button 
+          onClick={() => { setActiveTab('coupons'); setFeedback(null); }}
+          style={{ ...styles.tabBtn, ...(activeTab === 'coupons' ? styles.tabBtnActive : {}) }}
+        >
+          <span className="material-symbols-outlined">sell</span>
+          <span>Criar Cupons de Desconto</span>
+        </button>
+      </div>
+
       <div style={styles.mainGrid}>
         
-        {/* Lado Esquerdo: Gestor de Ofertas */}
-        <section style={styles.gestorCard}>
-          <div style={styles.gestorHeader}>
-            <div>
-              <h2 style={styles.cardTitle}>Gestor de Ofertas</h2>
-              <p style={styles.cardSubtitle}>Aplique descontos em massa no seu catálogo de Tefé</p>
+        {/* Lado Esquerdo: Formulários de Criação */}
+        <div style={styles.leftColumn}>
+          
+          {feedback && (
+            <div style={{
+              ...styles.feedbackBox,
+              backgroundColor: feedback.type === 'success' ? 'rgba(26, 115, 18, 0.08)' : 'rgba(186, 26, 26, 0.08)',
+              color: feedback.type === 'success' ? 'var(--tertiary)' : 'var(--error)',
+              marginBottom: '16px'
+            }}>
+              {feedback.message}
             </div>
-            
-            <div style={styles.actionBlock}>
-              <span style={styles.selectedCountText}>{selectedCount} itens selecionados</span>
-              <button 
-                onClick={() => alert(`Aplicado 10% OFF nos ${selectedCount} itens selecionados do catálogo.`)}
-                style={styles.applyBtn}
-                disabled={selectedCount === 0}
-              >
-                Aplicar 10% OFF
-              </button>
-            </div>
-          </div>
+          )}
 
-          <div style={styles.tableWrapper}>
-            <table style={styles.table}>
-              <thead>
-                <tr style={styles.trHead}>
-                  <th style={{ ...styles.th, width: '40px' }} />
-                  <th style={styles.th}>Produto</th>
-                  <th style={styles.th}>Estoque</th>
-                  <th style={styles.th}>Preço Atual</th>
-                  <th style={styles.th}>Sugerido (-10%)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {displayProducts.map((prod) => (
-                  <tr key={prod.id} style={styles.tr}>
-                    <td style={styles.td}>
+          {activeTab === 'promotions' ? (
+            <section style={styles.card}>
+              <h2 style={styles.cardTitle}>Nova Promoção de Catálogo</h2>
+              <p style={styles.cardSubtitle}>Crie descontos para um ou uma série de produtos selecionados.</p>
+
+              <form onSubmit={handleCreatePromotion} style={styles.form}>
+                
+                {/* Tipo de Promoção */}
+                <div style={styles.formGroup}>
+                  <label style={styles.formLabel}>Tipo de Campanha Promocional</label>
+                  <div style={styles.radioGroup}>
+                    <label style={{ ...styles.radioLabel, ...(promoType === 'period' ? styles.radioLabelActive : {}) }}>
                       <input 
-                        type="checkbox" 
-                        checked={!!selectedProductIds[prod.id]} 
-                        onChange={() => handleToggleSelectProduct(prod.id)}
+                        type="radio" 
+                        name="promoType" 
+                        value="period" 
+                        checked={promoType === 'period'}
+                        onChange={() => setPromoType('period')}
+                        style={styles.hiddenRadio}
+                      />
+                      <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>calendar_month</span>
+                      <span>Por Período (Data)</span>
+                    </label>
+                    
+                    <label style={{ ...styles.radioLabel, ...(promoType === 'quantity' ? styles.radioLabelActive : {}) }}>
+                      <input 
+                        type="radio" 
+                        name="promoType" 
+                        value="quantity" 
+                        checked={promoType === 'quantity'}
+                        onChange={() => setPromoType('quantity')}
+                        style={styles.hiddenRadio}
+                      />
+                      <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>filter_3</span>
+                      <span>Por Quantidade (Progressiva)</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Desconto */}
+                <div style={styles.formRow}>
+                  <div style={{ ...styles.formGroup, flex: 1 }}>
+                    <label style={styles.formLabel}>Desconto Aplicado (%)</label>
+                    <div style={styles.inputWrapper}>
+                      <input 
+                        type="number" 
+                        placeholder="15" 
+                        value={promoDiscount} 
+                        onChange={(e) => setPromoDiscount(e.target.value)}
+                        style={styles.formInput} 
+                        required 
+                      />
+                      <span style={styles.suffix}>%</span>
+                    </div>
+                  </div>
+
+                  {promoType === 'quantity' && (
+                    <div style={{ ...styles.formGroup, flex: 1 }}>
+                      <label style={styles.formLabel}>Quantidade Mínima de Compra</label>
+                      <input 
+                        type="number" 
+                        placeholder="3" 
+                        value={promoMinQty} 
+                        onChange={(e) => setPromoMinQty(e.target.value)}
+                        style={styles.formInput} 
+                        required 
+                      />
+                      <span style={styles.helpText}>Ex: Leve {promoMinQty} ou mais e ganhe o desconto.</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Data: se por período */}
+                {promoType === 'period' && (
+                  <div style={styles.formRow}>
+                    <div style={{ ...styles.formGroup, flex: 1 }}>
+                      <label style={styles.formLabel}>Data de Início</label>
+                      <input 
+                        type="datetime-local" 
+                        value={promoStartDate} 
+                        onChange={(e) => setPromoStartDate(e.target.value)}
+                        style={styles.formInput} 
+                        required 
+                      />
+                    </div>
+                    
+                    <div style={{ ...styles.formGroup, flex: 1 }}>
+                      <label style={styles.formLabel}>Data de Término</label>
+                      <input 
+                        type="datetime-local" 
+                        value={promoEndDate} 
+                        onChange={(e) => setPromoEndDate(e.target.value)}
+                        style={styles.formInput} 
+                        required 
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Aplicação da Promoção */}
+                <div style={styles.formGroup}>
+                  <label style={styles.formLabel}>Produtos Participantes</label>
+                  <div style={{ display: 'flex', gap: '24px', marginBottom: '8px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13.5px', fontWeight: '600' }}>
+                      <input 
+                        type="radio" 
+                        name="applyAll" 
+                        checked={applyToAll} 
+                        onChange={() => setApplyToAll(true)}
                         style={styles.checkbox}
                       />
-                    </td>
-                    <td style={styles.td}>
-                      <div style={styles.prodInfo}>
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={prod.img} alt={prod.title} style={styles.prodImg} />
-                        <div style={styles.prodText}>
-                          <span style={styles.prodTitle}>{prod.title}</span>
-                          <span style={styles.categoryBadge}>{prod.category}</span>
-                        </div>
-                      </div>
-                    </td>
-                    <td style={{ ...styles.td, color: 'var(--on-surface-variant)', fontWeight: '600' }}>
-                      {prod.stock} unidades
-                    </td>
-                    <td style={{ ...styles.td, fontWeight: '700' }}>
-                      {formatCurrency(prod.price)}
-                    </td>
-                    <td style={{ ...styles.td, fontWeight: '700', color: 'var(--secondary)' }}>
-                      {formatCurrency(prod.price * 0.9)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
+                      <span>Todos os produtos da loja</span>
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13.5px', fontWeight: '600' }}>
+                      <input 
+                        type="radio" 
+                        name="applyAll" 
+                        checked={!applyToAll} 
+                        onChange={() => setApplyToAll(false)}
+                        style={styles.checkbox}
+                      />
+                      <span>Selecionar produtos específicos</span>
+                    </label>
+                  </div>
 
-        {/* Lado Direito: Gerador de Cupons + Cupons Ativos */}
+                  {!applyToAll && (
+                    <div style={styles.productsSelectGrid}>
+                      {products.map(p => (
+                        <div key={p.id} style={styles.productSelectRow} onClick={() => handleToggleSelectProduct(p.id)}>
+                          <input 
+                            type="checkbox" 
+                            checked={!!selectedProductIds[p.id]} 
+                            onChange={() => {}}
+                            style={styles.checkbox}
+                          />
+                          <span style={styles.productSelectTitle}>{p.title}</span>
+                          <span style={styles.productSelectPrice}>{formatCurrency(p.current_price)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <button type="submit" style={styles.createBtn} disabled={submitting}>
+                  {submitting ? 'Criando Promoção...' : 'Publicar Promoção'}
+                </button>
+
+              </form>
+            </section>
+          ) : (
+            <section style={styles.card}>
+              <h2 style={styles.cardTitle}>Gerador de Cupons Master</h2>
+              <p style={styles.cardSubtitle}>Crie cupons alfanuméricos globais para campanhas de marketing.</p>
+
+              <form onSubmit={handleCreateCoupon} style={styles.form}>
+                <div style={styles.formGroup}>
+                  <label style={styles.formLabel}>Código do Cupom (Sem Espaços)</label>
+                  <input 
+                    type="text" 
+                    placeholder="EX: CASTANHA15" 
+                    value={couponCode} 
+                    onChange={(e) => setCouponCode(e.target.value)}
+                    style={styles.formInput} 
+                    required 
+                  />
+                </div>
+
+                <div style={styles.formRow}>
+                  <div style={{ ...styles.formGroup, flex: 1 }}>
+                    <label style={styles.formLabel}>Valor do Desconto (%)</label>
+                    <div style={styles.inputWrapper}>
+                      <input 
+                        type="number" 
+                        placeholder="10" 
+                        value={couponDiscount} 
+                        onChange={(e) => setCouponDiscount(e.target.value)}
+                        style={styles.formInput} 
+                        required 
+                      />
+                      <span style={styles.suffix}>%</span>
+                    </div>
+                  </div>
+
+                  <div style={{ ...styles.formGroup, flex: 1 }}>
+                    <label style={styles.formLabel}>Uso Limite Máximo</label>
+                    <input 
+                      type="number" 
+                      placeholder="100" 
+                      value={couponMaxUses} 
+                      onChange={(e) => setCouponMaxUses(e.target.value)}
+                      style={styles.formInput} 
+                      required 
+                    />
+                  </div>
+                </div>
+
+                <button type="submit" style={styles.createBtn} disabled={submitting}>
+                  {submitting ? 'Emitindo Cupom...' : 'Emitir Cupom'}
+                </button>
+              </form>
+            </section>
+          )}
+
+        </div>
+
+        {/* Lado Direito: Listas Ativas e Campanhas do Marketplace */}
         <div style={styles.rightColumn}>
           
-          {/* Card 1: Gerador de Cupons */}
-          <section style={styles.promoRightCard}>
-            <h2 style={styles.cardTitle}>Gerador de Cupons</h2>
+          {/* Campanhas do Marketplace (Admin) */}
+          <section style={styles.card}>
+            <div style={styles.listHeader}>
+              <h2 style={styles.cardTitle}>Campanhas do Marketplace (Admin)</h2>
+              <span style={{ ...styles.badgeCount, backgroundColor: 'var(--primary-container)', color: 'var(--on-primary-container)' }}>
+                {platformCampaigns.length} disponíveis
+              </span>
+            </div>
             
-            {feedback && (
-              <div style={{
-                ...styles.feedbackBox,
-                backgroundColor: feedback.type === 'success' ? 'rgba(26, 115, 18, 0.08)' : 'rgba(186, 26, 26, 0.08)',
-                color: feedback.type === 'success' ? 'var(--tertiary)' : 'var(--error)'
-              }}>
-                {feedback.message}
-              </div>
-            )}
+            <p style={{ fontSize: '12px', color: 'var(--outline)', margin: 0, fontWeight: '600' }}>
+              Adira às campanhas ativas da plataforma para promover seus produtos na vitrine principal.
+            </p>
 
-            <form onSubmit={handleCreateCoupon} style={styles.form}>
-              <div style={styles.formGroup}>
-                <label style={styles.formLabel}>Código do Cupom</label>
-                <input 
-                  type="text" 
-                  placeholder="EX: TEFE10" 
-                  style={styles.formInput}
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  required
-                />
-              </div>
+            <div style={styles.activeList}>
+              {platformCampaigns.length === 0 ? (
+                <p style={styles.emptyText}>Nenhuma campanha do marketplace ativa.</p>
+              ) : (
+                platformCampaigns.map(camp => (
+                  <div key={camp.id} style={styles.activePromoCard}>
+                    <div style={styles.promoInfo}>
+                      <span style={styles.promoProdTitle}>{camp.realCode}</span>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' }}>
+                        <span style={styles.promoTypeBadge}>Categoria: {camp.category}</span>
+                        <span style={styles.promoDiscountText}>{camp.discountPercent}% OFF</span>
+                      </div>
+                      <span style={styles.promoDetailsText}>Expira em: {camp.expiresAt}</span>
+                    </div>
 
-              <div style={styles.formRow}>
-                <div style={{ ...styles.formGroup, flex: 1 }}>
-                  <label style={styles.formLabel}>Desconto (%)</label>
-                  <input 
-                    type="number" 
-                    placeholder="10" 
-                    style={styles.formInput}
-                    value={discountValue}
-                    onChange={(e) => setDiscountValue(e.target.value)}
-                    required
-                  />
-                </div>
-                
-                <div style={{ ...styles.formGroup, flex: 1 }}>
-                  <label style={styles.formLabel}>Limite de Uso</label>
-                  <input 
-                    type="number" 
-                    placeholder="100" 
-                    style={styles.formInput}
-                    value={maxUses}
-                    onChange={(e) => setMaxUses(e.target.value)}
-                    required
-                  />
-                </div>
-              </div>
-
-              <button type="submit" style={styles.createBtn} disabled={submitting}>
-                {submitting ? 'Criando...' : 'Criar Cupom'}
-              </button>
-            </form>
+                    <button 
+                      onClick={() => handleOpenJoinModal(camp)} 
+                      style={styles.joinBtn}
+                    >
+                      Aderir
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
           </section>
 
-          {/* Card 2: Cupons Ativos */}
-          <section style={styles.promoRightCard}>
-            <h2 style={styles.cardTitle}>Cupons Ativos</h2>
-            
+          {/* Central de Promoções Ativas */}
+          <section style={styles.card}>
+            <div style={styles.listHeader}>
+              <h2 style={styles.cardTitle}>Promoções Ativas</h2>
+              <span style={styles.badgeCount}>{activePromotions.length} ativas</span>
+            </div>
+
+            <div style={styles.activeList}>
+              {loading ? (
+                <p style={styles.emptyText}>Buscando promoções...</p>
+              ) : activePromotions.length === 0 ? (
+                <p style={styles.emptyText}>Nenhuma promoção ativa cadastrada para seus produtos.</p>
+              ) : (
+                activePromotions.map(promo => (
+                  <div key={promo.id} style={styles.activePromoCard}>
+                    <div style={styles.promoInfo}>
+                      <span style={styles.promoProdTitle}>{promo.productTitle}</span>
+                      
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' }}>
+                        <span style={styles.promoTypeBadge}>
+                          {promo.type === 'period' ? 'Por Período' : 'Progressivo'}
+                        </span>
+                        <span style={styles.promoDiscountText}>
+                          {promo.discountPercent}% OFF
+                        </span>
+                      </div>
+
+                      {promo.type === 'period' ? (
+                        <span style={styles.promoDetailsText}>Válido até: {promo.endDate}</span>
+                      ) : (
+                        <span style={styles.promoDetailsText}>Qtd Mínima: {promo.minQty} unidades</span>
+                      )}
+                    </div>
+
+                    <button 
+                      onClick={() => handleEndPromotion(promo)} 
+                      style={styles.endBtn}
+                      title="Encerrar promoção"
+                    >
+                      Encerrar
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+
+          {/* Cupons Ativos */}
+          <section style={styles.card}>
+            <div style={styles.listHeader}>
+              <h2 style={styles.cardTitle}>Cupons Cadastrados</h2>
+              <span style={styles.badgeCount}>{coupons.length} códigos</span>
+            </div>
+
             <div style={styles.couponsList}>
-              {displayCoupons.map((coupon, idx) => {
-                const isActive = coupon.status === 'active';
-                return (
+              {loading ? (
+                <p style={styles.emptyText}>Carregando cupons...</p>
+              ) : coupons.length === 0 ? (
+                <p style={styles.emptyText}>Nenhum cupom ativo na loja.</p>
+              ) : (
+                coupons.map((c, idx) => (
                   <div key={idx} style={styles.couponItem}>
                     <div>
-                      <span style={styles.couponCode}>{coupon.code}</span>
-                      <span style={styles.couponDesc}>{coupon.discount} • {coupon.usesCount}/{coupon.maxUses} usos</span>
+                      <span style={styles.couponCode}>{c.code}</span>
+                      <span style={styles.couponDesc}>{c.discount_value}% OFF • {c.uses_count}/{c.max_uses} usos</span>
                     </div>
-                    {isActive ? (
-                      <span style={styles.activePill}>ATIVO</span>
-                    ) : (
-                      <span style={styles.expiredPill}>EXPIRADO</span>
-                    )}
+                    <span style={styles.activePill}>ATIVO</span>
                   </div>
-                );
-              })}
+                ))
+              )}
             </div>
           </section>
 
@@ -345,271 +735,386 @@ export default function PromotionsPage() {
 
       </div>
 
-      {/* Calendário de Ofertas (Sazonal) */}
-      <section style={styles.calendarCard}>
-        <div style={styles.calendarHeaderRow}>
-          <div>
-            <h2 style={styles.cardTitle}>Calendário de Ofertas</h2>
-            <p style={styles.cardSubtitle}>Planejamento sazonal para o comércio de Tefé</p>
-          </div>
-          
-          <div style={styles.calendarControls}>
-            <button style={styles.calendarNavBtn} onClick={() => alert('Voltar mês.')}>
-              <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>chevron_left</span>
-            </button>
-            <div style={styles.monthDisplayBox}>Novembro 2024</div>
-            <button style={styles.calendarNavBtn} onClick={() => alert('Próximo mês.')}>
-              <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>chevron_right</span>
-            </button>
-          </div>
-        </div>
+      {/* Modal de Adesão à Campanha */}
+      {joiningCampaign && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalCard}>
+            <h3 style={styles.modalTitle}>Aderir à Campanha: {joiningCampaign.realCode}</h3>
+            <p style={styles.modalDesc}>
+              Esta campanha concede <strong>{joiningCampaign.discountPercent}% de desconto</strong> para produtos na categoria <strong>{joiningCampaign.category}</strong>.
+              Selecione quais produtos da sua loja farão parte desta promoção.
+            </p>
 
-        {/* Grade do Calendário */}
-        <div style={styles.calendarGrid}>
-          
-          {/* Cabeçalho de Dias da Semana */}
-          <div style={styles.calendarWeekdaysRow}>
-            {['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SAB'].map((d) => (
-              <span key={d} style={styles.weekdayLabel}>{d}</span>
-            ))}
-          </div>
+            <div style={styles.modalForm}>
+              <div style={styles.formGroup}>
+                <label style={styles.formLabel}>Produtos Elegíveis da Sua Loja</label>
+                <div style={{ ...styles.productsSelectGrid, maxHeight: '250px' }}>
+                  {products
+                    .filter(p => {
+                      const productCategories = (p.category || '').split(',').map(c => c.trim().toLowerCase());
+                      return joiningCampaign.category === 'Todas' || productCategories.includes(joiningCampaign.category.toLowerCase());
+                    })
+                    .map(p => (
+                      <div 
+                        key={p.id} 
+                        style={styles.productSelectRow}
+                        onClick={() => {
+                          setCampaignProductIds(prev => ({ ...prev, [p.id]: !prev[p.id] }));
+                        }}
+                      >
+                        <input 
+                          type="checkbox" 
+                          checked={!!campaignProductIds[p.id]} 
+                          onChange={() => {}}
+                          style={styles.checkbox}
+                        />
+                        <span style={styles.productSelectTitle}>{p.title}</span>
+                        <span style={styles.productSelectPrice}>{formatCurrency(p.current_price)}</span>
+                      </div>
+                    ))}
 
-          {/* Células de Dias */}
-          <div style={styles.calendarDaysGrid}>
-            {/* Dias de Outubro (Desabilitados/Greyed out) */}
-            {[27, 28, 29, 30, 31].map((d) => (
-              <div key={`prev-${d}`} style={styles.dayCellDisabled}>{d}</div>
-            ))}
-            
-            {/* Dias de Novembro */}
-            {[1, 2, 3, 4].map((d) => (
-              <div key={`nov-${d}`} style={styles.dayCellActive}>{d}</div>
-            ))}
-            
-            {/* Dia 5 com Campanha Ativa */}
-            <div style={styles.dayCellCampaign}>
-              <span>5</span>
-              <div style={styles.campaignIndicatorDot} />
+                  {products.filter(p => {
+                    const productCategories = (p.category || '').split(',').map(c => c.trim().toLowerCase());
+                    return joiningCampaign.category === 'Todas' || productCategories.includes(joiningCampaign.category.toLowerCase());
+                  }).length === 0 && (
+                    <p style={styles.emptyText}>Você não possui nenhum produto cadastrado na categoria {joiningCampaign.category}.</p>
+                  )}
+                </div>
+              </div>
+
+              <div style={styles.modalActions}>
+                <button 
+                  onClick={handleConfirmJoinCampaign} 
+                  style={styles.confirmBtn}
+                  disabled={submitting || products.filter(p => {
+                    const productCategories = (p.category || '').split(',').map(c => c.trim().toLowerCase());
+                    return joiningCampaign.category === 'Todas' || productCategories.includes(joiningCampaign.category.toLowerCase());
+                  }).length === 0}
+                >
+                  {submitting ? 'Aderindo...' : 'Confirmar Adesão'}
+                </button>
+                <button 
+                  type="button" 
+                  onClick={() => setJoiningCampaign(null)} 
+                  style={styles.cancelBtn}
+                >
+                  Cancelar
+                </button>
+              </div>
             </div>
-
-            {/* Dias 6 a 9 de Novembro */}
-            {[6, 7, 8, 9].map((d) => (
-              <div key={`nov-${d}`} style={styles.dayCellActive}>{d}</div>
-            ))}
           </div>
-
         </div>
-      </section>
+      )}
 
     </div>
   );
 }
 
-// Estilos premium inline de acordo com o UÁRI Design System
+// Estilos
 const styles: { [key: string]: React.CSSProperties } = {
   container: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '16px',
+    gap: '24px',
     padding: '8px',
   },
   headerRow: {
     display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  pageTitle: {
-    fontSize: '32px',
-    fontWeight: '700',
-    color: 'var(--primary)',
-    fontFamily: 'Plus Jakarta Sans',
-  },
-  newCampaignBtn: {
-    backgroundColor: 'var(--secondary-container)', // #fe6b00
-    color: 'var(--on-secondary-container)', // #572000
-    border: 'none',
-    borderRadius: '9999px',
-    padding: '10px 24px',
-    fontSize: '14px',
-    fontWeight: '600',
-    cursor: 'pointer',
-    boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-  },
-  mainGrid: {
-    display: 'grid',
-    gridTemplateColumns: '2fr 1fr',
-    gap: '16px',
-    alignItems: 'start',
-  },
-  gestorCard: {
-    backgroundColor: 'var(--surface-container-lowest)',
-    borderRadius: '8px',
-    border: '1px solid var(--surface-container-highest)',
-    boxShadow: '0px 4px 20px rgba(110, 0, 193, 0.04)',
-    padding: '24px',
-  },
-  gestorHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: '24px',
-  },
-  cardTitle: {
-    fontSize: '20px',
-    fontWeight: '700',
-    color: 'var(--on-surface)',
-  },
-  cardSubtitle: {
-    fontSize: '14px',
-    color: 'var(--on-surface-variant)',
-    marginTop: '4px',
-  },
-  actionBlock: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '16px',
-  },
-  selectedCountText: {
-    fontSize: '14px',
-    color: 'var(--on-surface-variant)',
-    fontWeight: '600',
-  },
-  applyBtn: {
-    backgroundColor: 'var(--primary-container)', // #8a2be2
-    color: 'var(--on-primary-container)', // #eed9ff
-    border: 'none',
-    borderRadius: '8px',
-    padding: '10px 20px',
-    fontSize: '14px',
-    fontWeight: '700',
-    cursor: 'pointer',
-    transition: 'opacity 0.2s',
-  },
-  tableWrapper: {
-    overflowX: 'auto',
-  },
-  table: {
-    width: '100%',
-    borderCollapse: 'collapse',
-    textAlign: 'left',
-  },
-  trHead: {
-    borderBottom: '1px solid var(--surface-container-highest)',
-  },
-  th: {
-    padding: '12px 16px',
-    fontSize: '13px',
-    fontWeight: '700',
-    color: 'var(--outline)',
-    textTransform: 'uppercase',
-  },
-  tr: {
-    borderBottom: '1px solid var(--surface-container-highest)',
-  },
-  td: {
-    padding: '16px',
-    fontSize: '15px',
-    verticalAlign: 'middle',
-  },
-  checkbox: {
-    width: '18px',
-    height: '18px',
-    accentColor: 'var(--primary)',
-    cursor: 'pointer',
-  },
-  prodInfo: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-  },
-  prodImg: {
-    width: '48px',
-    height: '48px',
-    objectFit: 'cover',
-    borderRadius: '8px',
-    border: '1px solid rgba(0, 0, 0, 0.05)',
-  },
-  prodText: {
-    display: 'flex',
     flexDirection: 'column',
     gap: '4px',
   },
-  prodTitle: {
-    fontSize: '15px',
-    fontWeight: '700',
-    color: 'var(--on-surface)',
+  pageTitle: {
+    fontSize: '32px',
+    fontWeight: '800',
+    color: 'var(--primary)',
+    fontFamily: 'Plus Jakarta Sans',
   },
-  categoryBadge: {
-    alignSelf: 'flex-start',
-    display: 'inline-block',
-    padding: '2px 8px',
-    borderRadius: '4px',
-    backgroundColor: 'var(--surface-container-low)',
+  pageSubtitle: {
+    fontSize: '15px',
     color: 'var(--on-surface-variant)',
-    fontSize: '11px',
-    fontWeight: '600',
+  },
+  tabContainer: {
+    display: 'flex',
+    gap: '16px',
+    borderBottom: '1px solid var(--surface-container-highest)',
+    paddingBottom: '4px',
+  },
+  tabBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '12px 24px',
+    backgroundColor: 'transparent',
+    border: 'none',
+    fontSize: '14.5px',
+    fontWeight: '750',
+    color: 'var(--outline)',
+    cursor: 'pointer',
+    position: 'relative',
+    transition: 'all 0.2s',
+  },
+  tabBtnActive: {
+    color: 'var(--primary)',
+    fontWeight: '800',
+    borderBottom: '3px solid var(--primary)',
+  },
+  mainGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1.2fr 1fr',
+    gap: '24px',
+    alignItems: 'start',
+  },
+  leftColumn: {
+    display: 'flex',
+    flexDirection: 'column',
   },
   rightColumn: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '16px',
+    gap: '24px',
   },
-  promoRightCard: {
+  card: {
     backgroundColor: 'var(--surface-container-lowest)',
-    borderRadius: '8px',
-    border: '1px solid var(--surface-container-highest)',
-    boxShadow: '0px 4px 20px rgba(110, 0, 193, 0.04)',
+    borderRadius: '12px',
     padding: '24px',
+    border: '1px solid var(--surface-container-highest)',
+    boxShadow: '0px 4px 20px rgba(0, 0, 0, 0.02)',
     display: 'flex',
     flexDirection: 'column',
-    gap: '16px',
+    gap: '20px',
   },
-  feedbackBox: {
-    padding: '10px 14px',
-    borderRadius: '8px',
+  cardTitle: {
+    fontSize: '18px',
+    fontWeight: '800',
+    color: 'var(--on-surface)',
+    fontFamily: 'Plus Jakarta Sans',
+    margin: 0,
+  },
+  cardSubtitle: {
     fontSize: '13px',
+    color: 'var(--outline)',
+    margin: 0,
     fontWeight: '600',
+    lineHeight: '16px',
   },
   form: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '16px',
+    gap: '20px',
   },
   formGroup: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '6px',
+    gap: '8px',
   },
   formLabel: {
-    fontSize: '13px',
-    fontWeight: '600',
+    fontSize: '13.5px',
+    fontWeight: '750',
     color: 'var(--on-surface)',
   },
   formInput: {
-    padding: '10px 12px',
+    width: '100%',
+    padding: '12px 14px',
     borderRadius: '8px',
     border: '1px solid var(--outline-variant)',
     fontSize: '14px',
     fontFamily: 'Plus Jakarta Sans',
-    outline: 'none',
     color: 'var(--on-surface)',
-    backgroundColor: 'transparent',
+    backgroundColor: '#ffffff',
+    outline: 'none',
   },
   formRow: {
     display: 'flex',
-    gap: '12px',
+    gap: '16px',
   },
-  createBtn: {
-    backgroundColor: 'var(--primary-container)', // #8a2be2
-    color: 'var(--on-primary-container)', // #eed9ff
-    border: 'none',
+  inputWrapper: {
+    position: 'relative',
+    display: 'flex',
+    alignItems: 'center',
+  },
+  suffix: {
+    position: 'absolute',
+    right: '12px',
+    fontWeight: '750',
+    color: 'var(--outline)',
+    fontSize: '14px',
+    pointerEvents: 'none',
+  },
+  helpText: {
+    fontSize: '11px',
+    color: 'var(--outline)',
+    fontWeight: '600',
+    marginTop: '4px',
+  },
+  radioGroup: {
+    display: 'flex',
+    gap: '16px',
+  },
+  radioLabel: {
+    flex: '1',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '8px',
+    padding: '14px',
     borderRadius: '8px',
-    padding: '12px',
+    border: '1px solid var(--outline-variant)',
+    cursor: 'pointer',
     fontSize: '14px',
     fontWeight: '700',
+    color: 'var(--on-surface)',
+    transition: 'all 0.2s',
+  },
+  radioLabelActive: {
+    borderColor: 'var(--primary)',
+    backgroundColor: 'rgba(110, 0, 193, 0.04)',
+    color: 'var(--primary)',
+  },
+  hiddenRadio: {
+    display: 'none',
+  },
+  checkbox: {
+    width: '16px',
+    height: '16px',
     cursor: 'pointer',
-    width: '100%',
-    transition: 'opacity 0.2s',
+  },
+  productsSelectGrid: {
+    maxHeight: '200px',
+    overflowY: 'auto',
+    border: '1px solid var(--outline-variant)',
+    borderRadius: '8px',
+    padding: '8px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    backgroundColor: 'var(--surface-container-low)',
+  },
+  productSelectRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    padding: '8px',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    transition: 'background-color 0.15s',
+    backgroundColor: '#ffffff',
+  },
+  productSelectTitle: {
+    fontSize: '13.5px',
+    fontWeight: '700',
+    color: 'var(--on-surface)',
+    flex: '1',
+  },
+  productSelectPrice: {
+    fontSize: '13.5px',
+    fontWeight: '800',
+    color: 'var(--tertiary)',
+  },
+  createBtn: {
+    backgroundColor: 'var(--secondary-container)',
+    color: '#ffffff',
+    border: 'none',
+    borderRadius: '9999px',
+    padding: '14px',
+    fontSize: '14.5px',
+    fontWeight: '800',
+    cursor: 'pointer',
+    boxShadow: '0 4px 12px rgba(254, 107, 0, 0.15)',
+    transition: 'all 0.2s',
+  },
+  feedbackBox: {
+    padding: '12px 16px',
+    borderRadius: '8px',
+    fontSize: '13.5px',
+    fontWeight: '700',
+  },
+  listHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottom: '1px solid var(--surface-container-highest)',
+    paddingBottom: '12px',
+  },
+  badgeCount: {
+    fontSize: '12px',
+    fontWeight: '800',
+    backgroundColor: 'var(--surface-container-high)',
+    color: 'var(--on-surface)',
+    padding: '4px 10px',
+    borderRadius: '9999px',
+  },
+  activeList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+  },
+  emptyText: {
+    fontSize: '13px',
+    color: 'var(--outline)',
+    textAlign: 'center',
+    padding: '24px 0',
+    margin: 0,
+    fontWeight: '600',
+  },
+  activePromoCard: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '14px 16px',
+    backgroundColor: 'var(--surface-container-low)',
+    border: '1px solid var(--surface-container-highest)',
+    borderRadius: '8px',
+  },
+  promoInfo: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px',
+  },
+  promoProdTitle: {
+    fontSize: '14px',
+    fontWeight: '800',
+    color: 'var(--on-surface)',
+  },
+  promoTypeBadge: {
+    fontSize: '10.5px',
+    fontWeight: '800',
+    backgroundColor: 'var(--surface-container-high)',
+    color: 'var(--outline)',
+    padding: '2px 8px',
+    borderRadius: '4px',
+  },
+  promoDiscountText: {
+    fontSize: '12px',
+    fontWeight: '850',
+    color: 'var(--secondary)',
+  },
+  promoDetailsText: {
+    fontSize: '11px',
+    color: 'var(--outline)',
+    marginTop: '6px',
+    fontWeight: '600',
+  },
+  joinBtn: {
+    border: 'none',
+    backgroundColor: 'var(--primary)',
+    color: '#ffffff',
+    padding: '8px 16px',
+    borderRadius: '6px',
+    fontSize: '12.5px',
+    fontWeight: '800',
+    cursor: 'pointer',
+    transition: 'opacity 0.15s',
+  },
+  endBtn: {
+    border: 'none',
+    backgroundColor: 'rgba(186, 26, 26, 0.08)',
+    color: 'var(--error)',
+    padding: '6px 12px',
+    borderRadius: '6px',
+    fontSize: '12px',
+    fontWeight: '800',
+    cursor: 'pointer',
+    transition: 'background-color 0.15s',
   },
   couponsList: {
     display: 'flex',
@@ -620,20 +1125,21 @@ const styles: { [key: string]: React.CSSProperties } = {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: '12px',
+    padding: '12px 14px',
+    backgroundColor: 'var(--surface-container-low)',
     border: '1px solid var(--surface-container-highest)',
     borderRadius: '8px',
   },
   couponCode: {
-    fontSize: '15px',
-    fontWeight: '700',
+    fontSize: '14.5px',
+    fontWeight: '800',
     color: 'var(--primary)',
-    display: 'block',
   },
   couponDesc: {
-    fontSize: '12px',
-    color: 'var(--on-surface-variant)',
+    fontSize: '11.5px',
+    color: 'var(--outline)',
     marginTop: '2px',
+    fontWeight: '600',
     display: 'block',
   },
   activePill: {
@@ -642,123 +1148,74 @@ const styles: { [key: string]: React.CSSProperties } = {
     backgroundColor: 'rgba(26, 115, 18, 0.08)',
     color: 'var(--tertiary)',
     fontSize: '11px',
-    fontWeight: '700',
+    fontWeight: '800',
   },
-  expiredPill: {
-    padding: '4px 10px',
-    borderRadius: '9999px',
-    backgroundColor: 'var(--surface-container-highest)',
-    color: 'var(--on-surface-variant)',
-    fontSize: '11px',
-    fontWeight: '700',
-  },
-  calendarCard: {
-    backgroundColor: 'var(--surface-container-lowest)',
-    borderRadius: '8px',
-    border: '1px solid var(--surface-container-highest)',
-    boxShadow: '0px 4px 20px rgba(110, 0, 193, 0.04)',
-    padding: '24px',
-  },
-  calendarHeaderRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: '24px',
-  },
-  calendarControls: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-  },
-  calendarNavBtn: {
-    backgroundColor: 'transparent',
-    border: '1px solid var(--outline-variant)',
-    borderRadius: '8px',
-    width: '36px',
-    height: '36px',
+  modalOverlay: {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    cursor: 'pointer',
-    color: 'var(--on-surface)',
+    zIndex: 9999,
   },
-  monthDisplayBox: {
-    padding: '8px 16px',
-    border: '1px solid var(--outline-variant)',
-    borderRadius: '8px',
-    fontSize: '14px',
-    fontWeight: '600',
-    color: 'var(--on-surface)',
-    backgroundColor: 'var(--surface)',
-  },
-  calendarGrid: {
-    display: 'flex',
-    flexDirection: 'column',
-    border: '1px solid var(--surface-container-highest)',
-    borderRadius: '8px',
-    overflow: 'hidden',
-  },
-  calendarWeekdaysRow: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(7, 1fr)',
-    backgroundColor: 'var(--surface-container-low)',
-    borderBottom: '1px solid var(--surface-container-highest)',
-    padding: '12px 0',
-    textAlign: 'center',
-  },
-  weekdayLabel: {
-    fontSize: '12px',
-    fontWeight: '700',
-    color: 'var(--outline)',
-    letterSpacing: '0.05em',
-  },
-  calendarDaysGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(7, 1fr)',
-    gridAutoRows: '80px',
-  },
-  dayCellDisabled: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    justifyContent: 'flex-start',
-    padding: '8px',
-    borderRight: '1px solid var(--surface-container-highest)',
-    borderBottom: '1px solid var(--surface-container-highest)',
-    color: 'var(--surface-dim)',
-    backgroundColor: 'var(--surface-container-low)',
-    fontSize: '14px',
-    fontWeight: '600',
-  },
-  dayCellActive: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    justifyContent: 'flex-start',
-    padding: '8px',
-    borderRight: '1px solid var(--surface-container-highest)',
-    borderBottom: '1px solid var(--surface-container-highest)',
+  modalCard: {
     backgroundColor: '#ffffff',
-    color: 'var(--on-surface)',
-    fontSize: '14px',
-    fontWeight: '600',
-  },
-  dayCellCampaign: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    padding: '8px',
-    borderRight: '1px solid var(--surface-container-highest)',
-    borderBottom: '1px solid var(--surface-container-highest)',
-    backgroundColor: '#ffffff',
-    color: 'var(--on-surface)',
-    fontSize: '14px',
-    fontWeight: '600',
-  },
-  campaignIndicatorDot: {
+    borderRadius: '12px',
+    padding: '28px',
     width: '100%',
-    height: '6px',
+    maxWidth: '500px',
+    boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
+  },
+  modalTitle: {
+    fontSize: '20px',
+    fontWeight: '800',
+    color: 'var(--on-surface)',
+    margin: 0,
+    fontFamily: 'Plus Jakarta Sans',
+  },
+  modalDesc: {
+    fontSize: '13.5px',
+    color: 'var(--outline)',
+    margin: 0,
+    lineHeight: '18px',
+    fontWeight: '600',
+  },
+  modalForm: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
+  },
+  modalActions: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: '12px',
+    marginTop: '8px',
+  },
+  confirmBtn: {
     backgroundColor: 'var(--primary)',
-    borderRadius: '4px',
-    marginTop: '12px',
+    color: '#ffffff',
+    border: 'none',
+    borderRadius: '8px',
+    padding: '10px 20px',
+    fontSize: '13.5px',
+    fontWeight: '800',
+    cursor: 'pointer',
+  },
+  cancelBtn: {
+    backgroundColor: 'transparent',
+    border: '1px solid var(--outline-variant)',
+    color: 'var(--on-surface)',
+    borderRadius: '8px',
+    padding: '10px 20px',
+    fontSize: '13.5px',
+    fontWeight: '750',
+    cursor: 'pointer',
   }
 };

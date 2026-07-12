@@ -59,12 +59,28 @@ export default function LayoutClient({ children }: { children: ReactNode }) {
             <span>Curadoria de Produtos</span>
           </Link>
 
+          <Link href="/promocoes" style={{
+            ...styles.navLink,
+            ...(pathname === '/promocoes' ? styles.navLinkActive : {})
+          }}>
+            <span className="material-symbols-outlined">campaign</span>
+            <span>Campanhas de Desconto</span>
+          </Link>
+
           <Link href="/financeiro" style={{
             ...styles.navLink,
             ...(pathname === '/financeiro' ? styles.navLinkActive : {})
           }}>
             <span className="material-symbols-outlined">payments</span>
             <span>Financeiro</span>
+          </Link>
+
+          <Link href="/sorteios-gamificacao" style={{
+            ...styles.navLink,
+            ...(pathname === '/sorteios-gamificacao' ? styles.navLinkActive : {})
+          }}>
+            <span className="material-symbols-outlined">emoji_events</span>
+            <span>Sorteios & Gamificação</span>
           </Link>
 
           <Link href="/configuracoes" style={{
@@ -79,11 +95,6 @@ export default function LayoutClient({ children }: { children: ReactNode }) {
 
         {/* Bottom Sidebar Action area */}
         <div style={styles.sidebarFooter}>
-          <button onClick={() => alert('Gerando novo relatório de vendas consolidado do marketplace...')} style={styles.newReportBtn}>
-            <span className="material-symbols-outlined">add</span>
-            <span>Novo Relatório</span>
-          </button>
-          
           <Link href="#" onClick={() => alert('Suporte Master: Canal de contato com engenharia e suporte regional.')} style={styles.footerLink}>
             <span className="material-symbols-outlined">help</span>
             <span>Suporte</span>

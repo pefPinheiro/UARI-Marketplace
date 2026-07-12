@@ -107,7 +107,7 @@ export default function ClienteTabHome({ products, points, userName, onSelectTab
               activeOpacity={0.9}
               onPress={() => handleProductPress(prod)}
             >
-              <Image source={{ uri: prod.images[0] }} style={styles.productImage} />
+              <Image source={prod.images && prod.images[0] ? { uri: prod.images[0] } : require('../../../assets/logo.png')} style={styles.productImage} />
               
               {/* Tags Figma */}
               <View style={styles.discountTag}>

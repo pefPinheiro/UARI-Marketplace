@@ -114,39 +114,8 @@ export default function GamificacaoPage() {
   const [drawnWinner, setDrawnWinner] = useState<Winner | null>(null);
   const [showConfettiPopup, setShowConfettiPopup] = useState(false);
 
-  // Efeito da simulação do sorteio
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (isDrawing) {
-      interval = setInterval(() => {
-        setDrawingProgress((prev) => {
-          const next = prev + 2;
-          
-          // Altera os textos explicativos durante o embaralhamento
-          if (next < 30) {
-            setDrawingStepText('🌀 Misturando os cupons da urna digital de Tefé-AM...');
-          } else if (next < 65) {
-            setDrawingStepText('🔍 Filtrando cupons ativos baseados nos critérios promocionais...');
-          } else if (next < 90) {
-            setDrawingStepText('⚡ Decodificando handshakes e assinaturas da vitrine...');
-          } else {
-            setDrawingStepText('🏆 Selecionando o cupom sorteado de forma auditável...');
-          }
-
-          if (next >= 100) {
-            clearInterval(interval);
-            finalizeDraw();
-            return 100;
-          }
-          return next;
-        });
-      }, 60);
-    }
-    return () => clearInterval(interval);
-  }, [isDrawing]);
-
   // Finaliza a simulação e escolhe o ganhador aleatoriamente
-  const finalizeDraw = () => {
+  function finalizeDraw() {
     if (!activeRaffleId) return;
 
     const raffle = raffles.find((r) => r.id === activeRaffleId);
@@ -178,6 +147,37 @@ export default function GamificacaoPage() {
     setDrawingProgress(0);
     setActiveRaffleId(null);
   };
+
+  // Efeito da simulação do sorteio
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isDrawing) {
+      interval = setInterval(() => {
+        setDrawingProgress((prev) => {
+          const next = prev + 2;
+          
+          // Altera os textos explicativos durante o embaralhamento
+          if (next < 30) {
+            setDrawingStepText('🌀 Misturando os cupons da urna digital de Tefé-AM...');
+          } else if (next < 65) {
+            setDrawingStepText('🔍 Filtrando cupons ativos baseados nos critérios promocionais...');
+          } else if (next < 90) {
+            setDrawingStepText('⚡ Decodificando handshakes e assinaturas da vitrine...');
+          } else {
+            setDrawingStepText('🏆 Selecionando o cupom sorteado de forma auditável...');
+          }
+
+          if (next >= 100) {
+            clearInterval(interval);
+            finalizeDraw();
+            return 100;
+          }
+          return next;
+        });
+      }, 60);
+    }
+    return () => clearInterval(interval);
+  }, [isDrawing]);
 
   // Criação de Sorteio
   const handleCreateRaffle = (e: React.FormEvent) => {

@@ -33,6 +33,8 @@ export default function LayoutClient({ children }: { children: ReactNode }) {
   // States para Formulários de Auth
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
+  const [confirmEmail, setConfirmEmail] = useState('');
+  const [confirmSenha, setConfirmSenha] = useState('');
   const [nome, setNome] = useState('');
   const [storeName, setStoreName] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
@@ -67,7 +69,7 @@ export default function LayoutClient({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  const loadLojistaStore = async (userId: string, currentUser?: any) => {
+  async function loadLojistaStore(userId: string, currentUser?: any) {
     try {
       setAuthError('');
       // Autocorreção: Verifica se o perfil existe em public.profiles para evitar erros 409
@@ -117,9 +119,24 @@ export default function LayoutClient({ children }: { children: ReactNode }) {
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !senha) {
-      setAuthError('Preencha todos os campos!');
-      return;
+    if (isRegistering) {
+      if (!nome || !storeName || !email || !confirmEmail || !senha || !confirmSenha) {
+        setAuthError('Preencha todos os campos!');
+        return;
+      }
+      if (email.trim() !== confirmEmail.trim()) {
+        setAuthError('Os e-mails informados não coincidem!');
+        return;
+      }
+      if (senha !== confirmSenha) {
+        setAuthError('As senhas informadas não coincidem!');
+        return;
+      }
+    } else {
+      if (!email || !senha) {
+        setAuthError('Preencha todos os campos!');
+        return;
+      }
     }
 
     setAuthLoading(true);
@@ -298,6 +315,20 @@ export default function LayoutClient({ children }: { children: ReactNode }) {
               />
             </div>
 
+            {isRegistering && (
+              <div style={styles.formGroup}>
+                <label style={styles.formLabel}>Confirmar E-mail</label>
+                <input 
+                  type="email" 
+                  placeholder="Repita o e-mail informado" 
+                  style={styles.formInput}
+                  value={confirmEmail}
+                  onChange={(e) => setConfirmEmail(e.target.value)}
+                  required
+                />
+              </div>
+            )}
+
             <div style={styles.formGroup}>
               <label style={styles.formLabel}>Senha de Acesso</label>
               <input 
@@ -309,6 +340,20 @@ export default function LayoutClient({ children }: { children: ReactNode }) {
                 required
               />
             </div>
+
+            {isRegistering && (
+              <div style={styles.formGroup}>
+                <label style={styles.formLabel}>Confirmar Senha</label>
+                <input 
+                  type="password" 
+                  placeholder="Repita a senha de acesso" 
+                  style={styles.formInput}
+                  value={confirmSenha}
+                  onChange={(e) => setConfirmSenha(e.target.value)}
+                  required
+                />
+              </div>
+            )}
 
             <button type="submit" style={styles.authBtn} disabled={authLoading}>
               {authLoading ? 'Processando...' : isRegistering ? 'Cadastrar e Ativar Loja' : 'Entrar no Painel'}
@@ -403,13 +448,7 @@ export default function LayoutClient({ children }: { children: ReactNode }) {
               <span>Meu Catálogo</span>
             </Link>
 
-            <Link href="/entregas" style={{
-              ...styles.navLink,
-              ...(pathname === '/entregas' ? styles.navLinkActive : {})
-            }}>
-              <span className="material-symbols-outlined">local_shipping</span>
-              <span>Gestão de Entregas</span>
-            </Link>
+
 
             <Link href="/cupons" style={{
               ...styles.navLink,

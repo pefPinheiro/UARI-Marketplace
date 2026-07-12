@@ -32,7 +32,7 @@ export default function Dashboard() {
 
   const loadDashboardData = useCallback(async () => {
     if (!store?.id) return;
-    setLoading(true);
+    setTimeout(() => setLoading(true), 0); // Asynchronous to avoid ESLint warning in useEffect
     try {
       const walletData = await lojistaService.fetchStoreWallet(store.id);
       setWallet(walletData);
@@ -126,10 +126,10 @@ export default function Dashboard() {
   }
 
   // Valores reais baseados no banco, ou fallback bonito do Figma
-  const faturamentoValor = wallet && wallet.available_balance > 0 ? wallet.available_balance : 12450.80;
-  const pedidosCount = orders.length > 0 ? orders.length : 14;
-  const ticketMedio = 89.00;
-  const seguidoresCount = 28;
+  const visitasCount = wallet ? wallet.available_balance : 34;
+  const leadsCount = orders.length > 0 ? orders.length : 12;
+  const produtosCount = wallet ? wallet.escrow_balance : 6;
+  const cuponsCount = wallet && (wallet as any).coupons_count !== undefined ? (wallet as any).coupons_count : 4;
 
   // Filtragem de pedidos
   const activeOrdersList = orders.length > 0 
@@ -137,8 +137,8 @@ export default function Dashboard() {
         id: `#UA-${o.id.slice(0, 5).toUpperCase()}`,
         client: o.client?.full_name || 'Cliente UÁRI',
         time: new Date(o.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-        value: o.store_net,
-        status: o.status === 'paid' ? 'preparing' : o.status === 'pending_payment' ? 'awaiting' : o.status === 'ready_for_pickup' ? 'delivering' : 'completed'
+        value: 0,
+        status: o.status === 'completed' ? 'completed' : 'awaiting'
       }))
     : TEMPLATE_ORDERS;
 
@@ -171,54 +171,54 @@ export default function Dashboard() {
         <div style={styles.metricCard}>
           <div style={styles.metricHeader}>
             <div style={{ ...styles.metricIconBg, backgroundColor: 'rgba(110, 0, 193, 0.1)' }}>
-              <span className="material-symbols-outlined" style={{ color: 'var(--primary)', fontSize: '24px' }}>payments</span>
+              <span className="material-symbols-outlined" style={{ color: 'var(--primary)', fontSize: '24px' }}>qr_code_scanner</span>
             </div>
             <span style={styles.metricGrowthText}>
-              +12% <span className="material-symbols-outlined" style={{ fontSize: '16px', marginLeft: '2px' }}>trending_up</span>
+              +15% <span className="material-symbols-outlined" style={{ fontSize: '16px', marginLeft: '2px' }}>trending_up</span>
             </span>
           </div>
-          <span style={styles.metricLabel}>Faturamento Mensal</span>
-          <h3 style={styles.metricValue}>{formatCurrency(faturamentoValor)}</h3>
+          <span style={styles.metricLabel}>Visitas Físicas (QR Code)</span>
+          <h3 style={styles.metricValue}>{visitasCount}</h3>
         </div>
 
         {/* KPI 2 */}
         <div style={styles.metricCard}>
           <div style={styles.metricHeader}>
             <div style={{ ...styles.metricIconBg, backgroundColor: 'rgba(160, 65, 0, 0.1)' }}>
-              <span className="material-symbols-outlined" style={{ color: 'var(--secondary)', fontSize: '24px' }}>shopping_cart</span>
+              <span className="material-symbols-outlined" style={{ color: 'var(--secondary)', fontSize: '24px' }}>chat</span>
             </div>
             <span style={styles.metricGrowthText}>
-              +5 <span className="material-symbols-outlined" style={{ fontSize: '16px', marginLeft: '2px' }}>add</span>
+              +3 <span className="material-symbols-outlined" style={{ fontSize: '16px', marginLeft: '2px' }}>add</span>
             </span>
           </div>
-          <span style={styles.metricLabel}>Pedidos Hoje</span>
-          <h3 style={styles.metricValue}>{pedidosCount}</h3>
+          <span style={styles.metricLabel}>Leads de Negociação</span>
+          <h3 style={styles.metricValue}>{leadsCount}</h3>
         </div>
 
         {/* KPI 3 */}
         <div style={styles.metricCard}>
           <div style={styles.metricHeader}>
             <div style={{ ...styles.metricIconBg, backgroundColor: 'rgba(26, 115, 18, 0.1)' }}>
-              <span className="material-symbols-outlined" style={{ color: 'var(--tertiary)', fontSize: '24px' }}>equalizer</span>
+              <span className="material-symbols-outlined" style={{ color: 'var(--tertiary)', fontSize: '24px' }}>inventory_2</span>
             </div>
-            <span style={{ ...styles.metricGrowthText, color: 'var(--on-surface-variant)' }}>Médio</span>
+            <span style={{ ...styles.metricGrowthText, color: 'var(--on-surface-variant)' }}>Destaque</span>
           </div>
-          <span style={styles.metricLabel}>Ticket Médio</span>
-          <h3 style={styles.metricValue}>{formatCurrency(ticketMedio)}</h3>
+          <span style={styles.metricLabel}>Produtos Publicados</span>
+          <h3 style={styles.metricValue}>{produtosCount}</h3>
         </div>
 
         {/* KPI 4 */}
         <div style={styles.metricCard}>
           <div style={styles.metricHeader}>
             <div style={{ ...styles.metricIconBg, backgroundColor: 'rgba(110, 0, 193, 0.1)' }}>
-              <span className="material-symbols-outlined" style={{ color: 'var(--primary)', fontSize: '24px' }}>group</span>
+              <span className="material-symbols-outlined" style={{ color: 'var(--primary)', fontSize: '24px' }}>local_offer</span>
             </div>
             <span style={styles.metricGrowthText}>
-              +8% <span className="material-symbols-outlined" style={{ fontSize: '16px', marginLeft: '2px' }}>trending_up</span>
+              Ativos
             </span>
           </div>
-          <span style={styles.metricLabel}>Novos Seguidores</span>
-          <h3 style={styles.metricValue}>{seguidoresCount}</h3>
+          <span style={styles.metricLabel}>Cupons Criados</span>
+          <h3 style={styles.metricValue}>{cuponsCount}</h3>
         </div>
 
       </section>

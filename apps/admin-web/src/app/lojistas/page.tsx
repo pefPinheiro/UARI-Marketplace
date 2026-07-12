@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+import Link from 'next/link';
 
 // Interfaces
 interface Lojista {
@@ -9,7 +10,7 @@ interface Lojista {
   name: string;
   cnpj: string;
   owner: string;
-  plan: 'Ouro' | 'Prata' | 'Bronze';
+  plan: string;
   reputation: number; // 1 to 5
   status: 'Ativo' | 'Pendente' | 'Suspenso';
   logoSvg: string;
@@ -18,21 +19,6 @@ interface Lojista {
   gmv: string;
   productsCount: number;
   joinDate: string;
-}
-
-interface KycDocument {
-  id: string;
-  type: string;
-  urgent?: boolean;
-  storeName: string;
-  documentMockText: string;
-}
-
-interface ApprovedDoc {
-  id: string;
-  type: string;
-  storeName: string;
-  timeAgo: string;
 }
 
 export default function GestaoLojistasPage() {
@@ -103,35 +89,53 @@ export default function GestaoLojistasPage() {
           description,
           owner_id,
           created_at,
+          plan_id,
+          subscription_status,
+          whatsapp_number,
+          logo_url,
+          banner_url,
           profiles (
             full_name,
             email
+          ),
+          plans (
+            id,
+            title
+          ),
+          products (
+            id
           )
         `);
 
       if (error) throw error;
 
       if (data && data.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const mapped: Lojista[] = data.map((item: any, idx: number) => {
-          const plans: ('Ouro' | 'Prata' | 'Bronze')[] = ['Ouro', 'Prata', 'Bronze'];
-          const plan = plans[idx % 3] || 'Prata';
-          const status: 'Ativo' | 'Pendente' | 'Suspenso' = item.is_verified ? 'Ativo' : 'Pendente';
+          const plansObj = Array.isArray(item.plans) ? item.plans[0] : item.plans;
+          const planTitle = plansObj?.title || 'Plano Bronze';
+          
+          const status: 'Ativo' | 'Pendente' | 'Suspenso' = 
+            item.subscription_status === 'inactive' ? 'Suspenso' :
+            (item.is_verified ? 'Ativo' : 'Pendente');
           const logos = ['ceramic', 'fruit', 'express'];
           const logoSvg = logos[idx % 3] || 'express';
+
+          const productsCount = Array.isArray(item.products) ? item.products.length : 0;
 
           return {
             id: item.id,
             name: item.name,
             cnpj: item.document_cnpj || 'Sem CNPJ',
             owner: item.profiles?.full_name || 'Proprietário local',
-            plan: plan,
+            plan: planTitle,
             reputation: Math.round(Number(item.rating || 5)),
             status: status,
             logoSvg: logoSvg,
             email: item.profiles?.email || 'contato@tefe.com',
-            phone: '+55 (97) 99122-3344',
+            phone: item.whatsapp_number || '+55 (97) 99122-3344',
             gmv: idx === 0 ? 'R$ 28.450,00' : idx === 1 ? 'R$ 12.300,00' : 'R$ 3.890,00',
-            productsCount: idx === 0 ? 42 : idx === 1 ? 15 : 6,
+            productsCount: productsCount,
             joinDate: new Date(item.created_at).toLocaleDateString('pt-BR')
           };
         });
@@ -142,47 +146,10 @@ export default function GestaoLojistasPage() {
     }
   };
 
-  // Lista de documentos KYC pendentes
-  const [pendingDocs, setPendingDocs] = useState<KycDocument[]>([
-    {
-      id: 'doc-1',
-      type: 'RG do Responsável',
-      urgent: true,
-      storeName: 'Ateliê da Floresta',
-      documentMockText: 'CARTEIRA DE IDENTIDADE - RG\n\nNome: FRANCISCO JOSÉ DOS SANTOS\nRG: 4.892.102-AM\nÓrgão Emissor: SSP/AM\nNascimento: 14/08/1988\n\nDocumento verificado sob os termos de segurança da UÁRI.'
-    },
-    {
-      id: 'doc-2',
-      type: 'CNPJ da Empresa',
-      storeName: 'Peixaria Central',
-      documentMockText: 'COMPROVANTE DE INSCRIÇÃO E DE SITUAÇÃO CADASTRAL\n\nNÚMERO DE INSCRIÇÃO: 23.491.023/0001-50\nNOME EMPRESARIAL: PEIXARIA CENTRAL DE TEFE LTDA\nTÍTULO ESTABELECIMENTO: PEIXARIA CENTRAL\nSITUAÇÃO CADASTRAL: ATIVA\n\nEndereço: Rua Quintino Bocaiúva, Centro, Tefé-AM'
-    },
-    {
-      id: 'doc-3',
-      type: 'Comprovante de Endereço',
-      storeName: 'Tropical Fresh',
-      documentMockText: 'FATURA DE ENERGIA ELÉTRICA - AMAZONAS ENERGIA\n\nMês de Referência: Abril 2026\nCliente: ANA PAULA SOUZA\nEndereço: Estrada do Aeroporto, 452, Aeroporto, Tefé-AM\nConsumo: 310 kWh\nValor Total: R$ 382,40\n\nComprovante oficial de endereço de Tefé.'
-    }
-  ]);
-
-  // Documentos aprovados recentemente
-  const [approvedDocs, setApprovedDocs] = useState<ApprovedDoc[]>([
-    {
-      id: 'app-1',
-      type: 'Alvará de Funcionamento',
-      storeName: 'Amazon Express',
-      timeAgo: '2h atrás'
-    }
-  ]);
-
-  // Configurações Globais Financeiras
-  const [comissionInput, setComissionInput] = useState('12,5');
-  const [savingCommission, setSavingCommission] = useState(false);
   const [notification, setNotification] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null);
 
   // Estados dos Modais e Interatividades
   const [selectedLojista, setSelectedLojista] = useState<Lojista | null>(null);
-  const [viewingDoc, setViewingDoc] = useState<KycDocument | null>(null);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [invitePlan, setInvitePlan] = useState<'Ouro' | 'Prata' | 'Bronze'>('Prata');
@@ -200,36 +167,6 @@ export default function GestaoLojistasPage() {
     setTimeout(() => {
       setNotification(null);
     }, 4000);
-  };
-
-  // Funções de Ação KYC
-  const approveDocument = (id: string) => {
-    const doc = pendingDocs.find(d => d.id === id);
-    if (!doc) return;
-
-    // Remove das pendências
-    setPendingDocs(prev => prev.filter(d => d.id !== id));
-
-    // Adiciona na lista de aprovados recentes
-    const newAppDoc: ApprovedDoc = {
-      id: `app-${Date.now()}`,
-      type: doc.type,
-      storeName: doc.storeName,
-      timeAgo: 'Agora mesmo'
-    };
-    setApprovedDocs(prev => [newAppDoc, ...prev]);
-    triggerNotification(`✓ Documento "${doc.type}" da loja "${doc.storeName}" aprovado com sucesso!`);
-  };
-
-  const rejectDocument = (id: string) => {
-    const doc = pendingDocs.find(d => d.id === id);
-    if (!doc) return;
-
-    const motive = prompt(`Motivo de reprovação para o documento "${doc.type}" (${doc.storeName}):`, 'Documento ilegível ou inválido.');
-    if (motive === null) return; // cancelado pelo user
-
-    setPendingDocs(prev => prev.filter(d => d.id !== id));
-    triggerNotification(`✗ Documento "${doc.type}" rejeitado. Lojista notificado.`, 'info');
   };
 
   // Enviar convite de lojista
@@ -258,32 +195,26 @@ export default function GestaoLojistasPage() {
         phone: 'Pendente',
         gmv: 'R$ 0,00',
         productsCount: 0,
-        joinDate: 'Hoje'
+        joinDate: new Date().toLocaleDateString('pt-BR')
       };
       setLojistas(prev => [...prev, newLojista]);
     }, 1200);
-  };
-
-  // Salvar Taxa de Comissão Global
-  const handleSaveCommission = (e: React.FormEvent) => {
-    e.preventDefault();
-    setSavingCommission(true);
-    setTimeout(() => {
-      setSavingCommission(false);
-      triggerNotification(`⚙ Taxa de comissão padrão alterada para ${comissionInput}% com sucesso!`);
-    }, 800);
   };
 
   // Alterar Status do Lojista
   const changeLojistaStatus = async (id: string, newStatus: 'Ativo' | 'Pendente' | 'Suspenso') => {
     try {
       const isVerified = newStatus === 'Ativo';
+      const subscriptionStatus = newStatus === 'Suspenso' ? 'inactive' : 'active';
       
       // Se for um ID de banco real, atualiza no Supabase
       if (!id.startsWith('loj-')) {
         const { error } = await supabase
           .from('stores')
-          .update({ is_verified: isVerified })
+          .update({ 
+            is_verified: isVerified,
+            subscription_status: subscriptionStatus
+          })
           .eq('id', id);
 
         if (error) throw error;
@@ -299,6 +230,36 @@ export default function GestaoLojistasPage() {
     } catch (err) {
       console.error('Erro ao atualizar status do lojista no Supabase:', err);
       triggerNotification('Erro ao salvar alteração no banco Supabase.', 'error');
+    }
+  };
+
+  // Excluir lojista
+  const deleteLojista = async (id: string, name: string) => {
+    const confirmed = confirm(`Deseja REALMENTE excluir permanentemente a loja "${name}" e todos os seus produtos? Esta ação não pode ser desfeita.`);
+    if (!confirmed) return;
+
+    try {
+      if (!id.startsWith('loj-')) {
+        const { error } = await supabase
+          .from('stores')
+          .delete()
+          .eq('id', id);
+
+        if (error) {
+          // Tratar erro de chave estrangeira (integridade de dados)
+          if (error.code === '23503') {
+            alert(`Não é possível excluir a loja "${name}" porque ela possui registros vinculados (como pedidos/leads de vendas). Recomendamos alterar o status da loja para "Suspenso" (desativar).`);
+            return;
+          }
+          throw error;
+        }
+      }
+
+      setLojistas(prev => prev.filter(l => l.id !== id));
+      triggerNotification(`✓ Loja "${name}" excluída com sucesso!`, 'success');
+    } catch (err) {
+      console.error('Erro ao excluir lojista:', err);
+      triggerNotification('Erro ao excluir o lojista no banco Supabase.', 'error');
     }
   };
 
@@ -448,319 +409,143 @@ export default function GestaoLojistasPage() {
         </section>
       )}
 
-      {/* Main Content Layout Grid */}
-      <div style={styles.mainGrid}>
-        
-        {/* Lado Esquerdo: Lojistas Ativos e Configuração Financeira */}
-        <div style={styles.leftColumn}>
-          
-          {/* Card Lojistas Ativos */}
-          <div style={styles.card}>
-            <div style={styles.cardHeaderRow}>
-              <h2 style={styles.cardTitle}>Lojistas Ativos</h2>
-              <span style={styles.verTodosLink} onClick={() => {
-                setFilterPlan('Todos');
-                setFilterStatus('Todos');
-                setFilterSearch('');
-                setShowFilters(true);
-              }}>
-                Ver todos ›
-              </span>
-            </div>
+      {/* Card Lojistas Ativos */}
+      <div style={{ ...styles.card, width: '100%' }}>
+        <div style={styles.cardHeaderRow}>
+          <h2 style={styles.cardTitle}>Lojistas Ativos</h2>
+          <span style={styles.verTodosLink} onClick={() => {
+            setFilterPlan('Todos');
+            setFilterStatus('Todos');
+            setFilterSearch('');
+            setShowFilters(true);
+          }}>
+            Ver todos ›
+          </span>
+        </div>
 
-            <div style={styles.tableWrapper}>
-              <table style={styles.table}>
-                <thead>
-                  <tr style={styles.trHead}>
-                    <th style={styles.th}>Loja</th>
-                    <th style={styles.th}>Responsável</th>
-                    <th style={styles.th}>Plano</th>
-                    <th style={styles.th}>Reputação</th>
-                    <th style={styles.th}>Status</th>
-                    <th style={{ ...styles.th, textAlign: 'right' }}>Ações</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredLojistas.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} style={{ ...styles.td, textAlign: 'center', color: 'var(--outline)', padding: '32px' }}>
-                        Nenhum lojista encontrado para os filtros selecionados.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredLojistas.map(l => (
-                      <tr key={l.id} style={styles.trRow}>
-                        
-                        {/* Loja */}
-                        <td style={styles.tdStore}>
-                          <div style={styles.storeInfoCell}>
-                            {renderLogo(l.logoSvg)}
-                            <div>
-                              <span style={styles.storeNameText}>{l.name}</span>
-                              <span style={styles.storeCnpjText}>CNPJ: {l.cnpj}</span>
-                            </div>
-                          </div>
-                        </td>
+        <div style={styles.tableWrapper}>
+          <table style={styles.table}>
+            <thead>
+              <tr style={styles.trHead}>
+                <th style={styles.th}>Loja</th>
+                <th style={styles.th}>Responsável</th>
+                <th style={styles.th}>Plano</th>
+                <th style={styles.th}>Reputação</th>
+                <th style={styles.th}>Status</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredLojistas.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ ...styles.td, textAlign: 'center', color: 'var(--outline)', padding: '32px' }}>
+                    Nenhum lojista encontrado para os filtros selecionados.
+                  </td>
+                </tr>
+              ) : (
+                filteredLojistas.map(l => (
+                  <tr key={l.id} style={styles.trRow}>
+                    
+                    {/* Loja */}
+                    <td style={styles.tdStore}>
+                      <div style={styles.storeInfoCell}>
+                        {renderLogo(l.logoSvg)}
+                        <div>
+                          <span style={styles.storeNameText}>{l.name}</span>
+                          <span style={styles.storeCnpjText}>CNPJ: {l.cnpj}</span>
+                        </div>
+                      </div>
+                    </td>
 
-                        {/* Responsável */}
-                        <td style={styles.td}>
-                          <div style={styles.responsibleCell}>
-                            {l.owner}
-                          </div>
-                        </td>
+                    {/* Responsável */}
+                    <td style={styles.td}>
+                      <div style={styles.responsibleCell}>
+                        {l.owner}
+                      </div>
+                    </td>
 
-                        {/* Plano */}
-                        <td style={styles.td}>
-                          <span style={{
-                            ...styles.planBadge,
-                            ...(l.plan === 'Ouro' ? styles.planGold : l.plan === 'Prata' ? styles.planSilver : styles.planBronze)
-                          }}>
-                            {l.plan}
-                          </span>
-                        </td>
+                    {/* Plano */}
+                    <td style={styles.td}>
+                      <span style={{
+                        ...styles.planBadge,
+                        ...(l.plan === 'Ouro' ? styles.planGold : l.plan === 'Prata' ? styles.planSilver : styles.planBronze)
+                      }}>
+                        {l.plan}
+                      </span>
+                    </td>
 
-                        {/* Reputação (Estrelas) */}
-                        <td style={styles.td}>
-                          <span style={styles.starsWrapper}>
-                            {'★'.repeat(l.reputation)}
-                            {'☆'.repeat(5 - l.reputation)}
-                          </span>
-                        </td>
+                    {/* Reputação (Estrelas) */}
+                    <td style={styles.td}>
+                      <span style={styles.starsWrapper}>
+                        {'★'.repeat(l.reputation)}
+                        {'☆'.repeat(5 - l.reputation)}
+                      </span>
+                    </td>
 
-                        {/* Status */}
-                        <td style={styles.td}>
-                          <span style={{
-                            ...styles.statusBadge,
-                            ...(l.status === 'Ativo' ? styles.statusAtivo : l.status === 'Pendente' ? styles.statusPendente : styles.statusSuspenso)
-                          }}>
-                            <span style={{
-                              ...styles.statusDot,
-                              backgroundColor: l.status === 'Ativo' ? '#1a7312' : l.status === 'Pendente' ? '#fe6b00' : '#ba1a1a'
-                            }} />
-                            {l.status}
-                          </span>
-                        </td>
+                    {/* Status */}
+                    <td style={styles.td}>
+                      <span style={{
+                        ...styles.statusBadge,
+                        ...(l.status === 'Ativo' ? styles.statusAtivo : l.status === 'Pendente' ? styles.statusPendente : styles.statusSuspenso)
+                      }}>
+                        <span style={{
+                          ...styles.statusDot,
+                          backgroundColor: l.status === 'Ativo' ? '#1a7312' : l.status === 'Pendente' ? '#fe6b00' : '#ba1a1a'
+                        }} />
+                        {l.status}
+                      </span>
+                    </td>
 
-                        {/* Ações */}
-                        <td style={{ ...styles.td, textAlign: 'right' }}>
+                    {/* Ações */}
+                    <td style={{ ...styles.td, textAlign: 'right' }}>
+                      <div style={{ display: 'inline-flex', gap: '8px', alignItems: 'center' }}>
+                        <Link href={`/lojistas/${l.id}`} style={{ textDecoration: 'none' }}>
                           <button 
                             type="button" 
-                            onClick={() => setSelectedLojista(l)} 
                             style={styles.detailsBtn}
                           >
-                            Ver Detalhes
+                            Gerenciar
                           </button>
-                        </td>
+                        </Link>
+                        
+                        {l.status === 'Suspenso' ? (
+                          <button
+                            type="button"
+                            onClick={() => changeLojistaStatus(l.id, 'Ativo')}
+                            style={{ ...styles.actionMiniBtn, color: '#1a7312', backgroundColor: 'rgba(26, 115, 18, 0.08)' }}
+                            title="Reativar Loja"
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>check_circle</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => changeLojistaStatus(l.id, 'Suspenso')}
+                            style={{ ...styles.actionMiniBtn, color: '#ba1a1a', backgroundColor: 'rgba(186, 26, 26, 0.08)' }}
+                            title="Suspender/Desativar Loja"
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>block</span>
+                          </button>
+                        )}
 
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-          </div>
-
-          {/* Card Configuração Financeira */}
-          <div style={styles.card}>
-            <div style={styles.cardHeaderSimple}>
-              <div style={styles.finHeaderIconBg}>
-                <span className="material-symbols-outlined" style={{ color: 'var(--primary)', fontSize: '20px' }}>account_balance_wallet</span>
-              </div>
-              <div>
-                <h2 style={styles.cardTitleNoMargin}>Configuração Financeira</h2>
-                <p style={styles.cardSubtitle}>Ajustar taxas e comissões globais do marketplace</p>
-              </div>
-            </div>
-
-            <form onSubmit={handleSaveCommission} style={styles.commissionForm}>
-              <div style={styles.formGroup}>
-                <label style={styles.commissionLabel}>Taxa de Comissão (%)</label>
-                
-                <div style={styles.commissionInputBox}>
-                  <input 
-                    type="text" 
-                    value={comissionInput} 
-                    onChange={(e) => setComissionInput(e.target.value)} 
-                    style={styles.commissionInput}
-                  />
-                  <span style={styles.commissionSuffix}>%</span>
-                </div>
-              </div>
-
-              <div style={styles.commissionActions}>
-                <button type="submit" style={styles.orangeBtn} disabled={savingCommission}>
-                  {savingCommission ? 'Salvando...' : 'Salvar Alterações'}
-                </button>
-                
-                <span 
-                  style={styles.historyLink} 
-                  onClick={() => triggerNotification('Histórico: 27/05/2026 - Taxa alterada de 10,0% para 12,5% por Admin Master.', 'info')}
-                >
-                  Histórico de Alterações
-                </span>
-              </div>
-            </form>
-
-            <span style={styles.finHelpText}>A taxa atual é aplicada a todas as vendas de novos lojistas.</span>
-
-          </div>
-
-        </div>
-
-        {/* Lado Direito: KYC & Documentos e Aprovados */}
-        <div style={styles.rightColumn}>
-          
-          <div style={styles.card}>
-            
-            {/* Header do KYC */}
-            <div style={styles.kycHeaderRow}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span className="material-symbols-outlined" style={{ color: '#1a7312', fontSize: '22px' }}>verified_user</span>
-                <h2 style={styles.cardTitleNoMargin}>KYC & Documentos</h2>
-              </div>
-              {pendingDocs.length > 0 && (
-                <span style={styles.kycPendingBadge}>
-                  {pendingDocs.length.toString().padStart(2, '0')} Pendentes
-                </span>
-              )}
-            </div>
-
-            {/* List de KYC Cards */}
-            <div style={styles.kycList}>
-              {pendingDocs.length === 0 ? (
-                <div style={styles.emptyKycBox}>
-                  <span className="material-symbols-outlined" style={{ fontSize: '32px', color: '#1a7312' }}>check_circle_outline</span>
-                  <span style={{ fontWeight: '700', fontSize: '13px', color: 'var(--on-surface)' }}>Tudo em dia!</span>
-                  <span style={{ fontSize: '11px', color: 'var(--outline)' }}>Nenhum documento aguardando análise no momento.</span>
-                </div>
-              ) : (
-                pendingDocs.map(doc => (
-                  <div key={doc.id} style={styles.kycCard}>
-                    
-                    <div style={styles.kycCardHeader}>
-                      <span style={styles.docTypeName}>{doc.type}</span>
-                      {doc.urgent && <span style={styles.urgentTag}>URGENTE</span>}
-                    </div>
-
-                    <span style={styles.docStoreName}>Loja: {doc.storeName}</span>
-
-                    <div style={styles.kycCardActions}>
-                      <button 
-                        type="button" 
-                        onClick={() => setViewingDoc(doc)} 
-                        style={styles.viewDocBtn}
-                      >
-                        <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>visibility</span>
-                        <span>Visualizar</span>
-                      </button>
-
-                      <div style={styles.kycDecisionButtons}>
-                        <button 
-                          type="button" 
-                          onClick={() => approveDocument(doc.id)} 
-                          style={styles.approveDocSquareBtn}
-                          title="Aprovar Documento"
+                        <button
+                          type="button"
+                          onClick={() => deleteLojista(l.id, l.name)}
+                          style={{ ...styles.actionMiniBtn, color: 'var(--outline)', backgroundColor: 'var(--surface-container-high)' }}
+                          title="Excluir Loja permanentemente"
                         >
-                          <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>check</span>
-                        </button>
-                        <button 
-                          type="button" 
-                          onClick={() => rejectDocument(doc.id)} 
-                          style={styles.rejectDocSquareBtn}
-                          title="Recusar Documento"
-                        >
-                          <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>close</span>
+                          <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>delete</span>
                         </button>
                       </div>
-                    </div>
+                    </td>
 
-                  </div>
+                  </tr>
                 ))
               )}
-            </div>
-
-            {/* Recentemente Aprovados Section */}
-            <div style={styles.approvedSection}>
-              <h3 style={styles.approvedSectionTitle}>RECENTEMENTE APROVADOS</h3>
-              
-              <div style={styles.approvedList}>
-                {approvedDocs.map(doc => (
-                  <div key={doc.id} style={styles.approvedRow}>
-                    <div style={styles.approvedIconBg}>
-                      <span className="material-symbols-outlined" style={{ fontSize: '18px', color: 'var(--outline)' }}>description</span>
-                    </div>
-                    
-                    <div style={styles.approvedTextGroup}>
-                      <span style={styles.approvedDocName}>{doc.type}</span>
-                      <span style={styles.approvedSubtext}>{doc.storeName} • {doc.timeAgo}</span>
-                    </div>
-
-                    <span className="material-symbols-outlined" style={{ fontSize: '18px', color: 'var(--outline)' }}>check_circle</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-          </div>
-
+            </tbody>
+          </table>
         </div>
-
       </div>
-
-      {/* MODAL 1: Visualizador de Documentos KYC */}
-      {viewingDoc && (
-        <div style={styles.modalOverlay}>
-          <div style={styles.documentViewerCard}>
-            <div style={styles.docViewerHeader}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span className="material-symbols-outlined" style={{ color: 'var(--primary)' }}>description</span>
-                <span style={{ fontWeight: '800', fontSize: '16px', color: 'var(--on-surface)' }}>{viewingDoc.type}</span>
-              </div>
-              <span className="material-symbols-outlined" style={styles.closeModalIcon} onClick={() => setViewingDoc(null)}>close</span>
-            </div>
-
-            <p style={styles.docViewerStoreName}>Loja solicitante: <strong>{viewingDoc.storeName}</strong></p>
-
-            <div style={styles.docPaperSimulator}>
-              <div style={styles.docWatermark}>UÁRI HOMOLOGADO</div>
-              <pre style={styles.docTextContent}>{viewingDoc.documentMockText}</pre>
-            </div>
-
-            <div style={styles.docViewerActions}>
-              <button 
-                type="button" 
-                onClick={() => {
-                  approveDocument(viewingDoc.id);
-                  setViewingDoc(null);
-                }} 
-                style={styles.greenDocBtn}
-              >
-                Aprovar Documento
-              </button>
-              
-              <button 
-                type="button" 
-                onClick={() => {
-                  rejectDocument(viewingDoc.id);
-                  setViewingDoc(null);
-                }} 
-                style={styles.redDocBtn}
-              >
-                Recusar Documento
-              </button>
-
-              <button 
-                type="button" 
-                onClick={() => setViewingDoc(null)} 
-                style={styles.cancelDocBtn}
-              >
-                Fechar Visualização
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* MODAL 2: Detalhes do Lojista */}
       {selectedLojista && (
@@ -1802,5 +1587,16 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontWeight: '800',
     cursor: 'pointer',
     boxShadow: '0 4px 12px rgba(110, 0, 193, 0.15)',
+  },
+  actionMiniBtn: {
+    border: 'none',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '28px',
+    height: '28px',
+    borderRadius: '50%',
+    cursor: 'pointer',
+    transition: 'all 0.15s',
   }
 };
